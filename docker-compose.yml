@@ -1,0 +1,25 @@
+version: "3.9"
+
+services:
+  woke-llm:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - PYTHONUNBUFFERED=1
+      # Optional: LLM_HOOK_URL=http://boggerstheai:8080/evolve
+    volumes:
+      # Mount a checkpoint directory for persistent model weights
+      - ./checkpoints:/app/checkpoints
+      # Mount corpus directory for custom training data
+      - ./data:/app/data
+    command: >
+      python inference_server.py
+      --host 0.0.0.0
+      --port 8000
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
