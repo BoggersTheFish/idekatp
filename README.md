@@ -127,6 +127,34 @@ The script is tuned for **CPU** research runs, not large-batch GPU training.
 - `build_sequence_dataset(tokens, window_size)` — sliding (context, target) pairs
 - `generate(..., log_dynamics=True)` — prints per–outer-step metrics (norm change, token variance, cosine to previous step) while sampling
 
+## Submodules (TS-OS integration)
+
+This repo uses git submodules to pin the TS-OS dependency stack. Clone with:
+
+```bash
+git clone --recurse-submodules https://github.com/BoggersTheFish/woke-baby-llm.git
+```
+
+If you already cloned without `--recurse-submodules`:
+
+```bash
+git submodule update --init --recursive
+```
+
+| Path | Repo | Branch | Role |
+|------|------|--------|------|
+| `vendor/GOAT-TS` | [GOAT-TS](https://github.com/BoggersTheFish/GOAT-TS) | `main` | Constraint-graph engine, tension semantics |
+| `vendor/TS-Core` | [TS-Core](https://github.com/BoggersTheFish/TS-Core) | `master` | UniversalLivingGraph, WaveCycleRunner (Rust + Python) |
+| `vendor/ts-llm` | [ts-llm](https://github.com/BoggersTheFish/ts-llm) | `main` | Tokenizer, hierarchical fast/slow dynamics, attractor LLM package |
+
+SHAs are pinned at the time each Wave PR lands. To update a submodule to latest:
+
+```bash
+git -C vendor/<name> pull
+git add vendor/<name>
+git commit -m "chore: bump <name> submodule"
+```
+
 ## License
 
 [MIT](LICENSE)

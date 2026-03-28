@@ -1,0 +1,10 @@
+[submodule "vendor/GOAT-TS"]
+	path = vendor/GOAT-TS
+	url = https://github.com/BoggersTheFish/GOAT-TS.git
+[submodule "vendor/ts-llm"]
+	path = vendor/ts-llm
+	url = https://github.com/BoggersTheFish/ts-llm.git
+[submodule "vendor/TS-Core"]
+	path = vendor/TS-Core
+	url = https://github.com/BoggersTheFish/TS-Core.git
+	branch = master
