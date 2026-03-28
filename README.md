@@ -48,3 +48,7 @@ This trains for a few epochs on a tiny bundled corpus, then prints sample genera
 
 - `TorchAttractorLanguageModel` — embed, `get_signal`, `evolve_token`, `next_token_logits`, `generate`, `encode_prompt`
 - `compare_prompts(model, prompt_a, prompt_b)` — L2 / cosine between final combined states
+
+## License
+
+[MIT](LICENSE)
