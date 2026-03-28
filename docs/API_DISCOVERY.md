@@ -1,114 +1,222 @@
-# Phase 0 API Discovery
+# API Discovery — Vendored Submodules
 
-Verified entrypoints from `vendor/GOAT-TS` and `vendor/TS-Core` as of the pinned submodule SHAs.
+Verified entrypoints for all three TS-OS vendored repos as of the pinned submodule SHAs.
+Last verified: March 2026.
+
+---
 
 ## GOAT-TS
 
-Python-only. Import path root: `vendor/GOAT-TS/src/`.
+Python-only. Import root: `vendor/GOAT-TS/src/`.
 
-### Node / Edge / Wave / MemoryState models
-`src/graph/models.py`
-- `Node(node_id, label, node_type, activation, state: MemoryState, ...)` — dataclass (slots)
-- `Edge(src_id, dst_id, relation, weight)` — dataclass
-- `Wave(wave_id, label, source, tension, ...)` — cognitive episode record
-- `MemoryState` — StrEnum: `ACTIVE`, `DORMANT`, `DEEP`
+> **Note:** `vendor/GOAT-TS/src/graph/__init__.py` imports `sentence_transformers`
+> (an optional heavy dependency). Load `models.py` and `memory_manager.py` directly
+> via `importlib.util.spec_from_file_location` to avoid this — see `goat_memory_transitions.py`
+> for the production pattern.
 
-### Wave propagation
-`src/graph/wave_propagation.py`
-- `run_wave_propagation(nodes, edges, input_text|seed_ids, *, max_hops, decay, threshold, use_torch) -> (nodes, WavePropagationResult)` — full pipeline; GPU via PyTorch when available
-- `propagate_wave(node_ids, edges, nodes, seed_ids, ...) -> WavePropagationResult`
-- `WavePropagationResult(activations: dict[str,float], iterations, converged, seed_ids)`
+### Data models — `src/graph/models.py`
 
-### Tension (GOAT-TS constraint-graph sense)
-`src/reasoning/tension.py`
-- `compute_tension(positions: dict[str, np.ndarray], expected_distances: dict[tuple,float]) -> TensionResult`
-- `TensionResult(score: float, high_tension_pairs: list[...])`
+| Symbol | Type | Description |
+|--------|------|-------------|
+| `Node` | dataclass (slots) | Graph node: `node_id`, `label`, `activation`, `state: MemoryState`, `embedding`, `position`, `velocity` |
+| `Edge` | dataclass (slots) | Directed edge: `src_id`, `dst_id`, `relation`, `weight` |
+| `Wave` | dataclass (slots) | Cognitive episode: `wave_id`, `label`, `tension`, `coherence`, `intensity` |
+| `Triple` | dataclass (slots) | Subject–relation–object triple with confidence |
+| `MemoryState` | StrEnum | `ACTIVE`, `DORMANT`, `DEEP` |
+| `NodeType` | StrEnum | `KNOWLEDGE`, `QUESTION`, `HYPOTHESIS`, `SURPRISE`, `EQUATION`, `CLUSTER`, `GOAL` |
 
-### Memory state transitions (maps to Phase 6 ACTIVE → DORMANT → DEEP)
-`src/memory_manager.py`
-- `memory_tick(nodes, low_activation_ticks, *, decay_rate, active_threshold, dormant_threshold, ticks_to_deep) -> (nodes, ticks)`
-- `apply_decay_and_transitions(nodes, decay_rate, ...)` — one tick: decay + state transition
-- `promote_to_deep_after_ticks(nodes, low_activation_ticks, ...)` — DORMANT → DEEP after N ticks
-- Thresholds: `ACTIVE_THRESHOLD=0.5`, `DORMANT_THRESHOLD=0.1`, `TICKS_TO_DEEP=3`
+### Memory management — `src/memory_manager.py`
 
-### Graph engine
-`src/graph/graph_engine.py` — higher-level graph CRUD + persistence (optional; not required for Phase 0 smoke)
+```python
+from src.memory_manager import memory_tick, apply_decay_and_transitions
+
+nodes, tick_counts = memory_tick(
+    nodes,
+    low_activation_ticks,
+    decay_rate=0.95,
+    active_threshold=0.5,    # activation ≥ this → ACTIVE
+    dormant_threshold=0.1,   # activation < this → DORMANT
+    ticks_to_deep=3,         # consecutive ticks at DORMANT before → DEEP
+)
+```
+
+Key functions:
+
+| Function | Description |
+|----------|-------------|
+| `decay_activations(nodes, decay_rate)` | Exponential decay on all activations |
+| `transition_states(nodes, ...)` | ACTIVE / DORMANT transitions by threshold |
+| `apply_decay_and_transitions(nodes, ...)` | One tick: decay + transition |
+| `promote_to_deep_after_ticks(nodes, ticks, ...)` | DORMANT → DEEP after N ticks |
+| `memory_tick(nodes, ticks, ...)` | Full tick: decay + ACTIVE/DORMANT + DEEP promotion |
+
+Default constants: `ACTIVE_THRESHOLD=0.5`, `DORMANT_THRESHOLD=0.1`, `TICKS_TO_DEEP=3`, `DEFAULT_DECAY_RATE=0.95`
+
+### Tension — `src/reasoning/tension.py`
+
+```python
+from src.reasoning.tension import compute_tension
+
+result = compute_tension(
+    positions={"nodeA": np.array([1.0, 0.0]), "nodeB": np.array([0.5, 0.5])},
+    expected_distances={("nodeA", "nodeB"): 1.0},
+)
+# result.score: float (total squared deviation)
+# result.high_tension_pairs: list[(src, dst, delta)]  — top 10
+```
+
+### Wave propagation — `src/graph/wave_propagation.py`
+
+```python
+from src.graph.wave_propagation import run_wave_propagation
+
+nodes, result = run_wave_propagation(
+    nodes, edges,
+    input_text="the cat sat",   # OR seed_ids=["node1", "node2"]
+    max_hops=5,
+    decay=0.1,
+    threshold=0.1,
+    use_torch=True,             # GPU via PyTorch when available
+)
+# result.activations: dict[node_id, float]
+# result.converged: bool
+# result.iterations: int
+```
+
+Propagation uses interference-weighted adjacency: aligned embeddings (cosine ≥ 0) scale by `ALIGN_FACTOR=1.2`, opposed by `OPPOSE_FACTOR=0.8`.
 
 ---
 
 ## TS-Core
 
-Rust crate (`vendor/TS-Core/src/rust/`) with **optional** PyO3 bindings (`ts_core_kernel`).
-Falls back gracefully to pure-Python equivalent when Rust extension is not built.
+Rust crate (`vendor/TS-Core/src/rust/`) with PyO3 bindings (`ts_core_kernel`).
+Falls back transparently to pure-Python equivalent when the Rust extension is not built.
 
-**Integration boundary: pure-Python import** — no Rust build required.
-Import root: `vendor/TS-Core/src/python/`.
+**No Rust build required** for Waves 0–E.
 
-### TSCore (primary class)
-`src/python/core.py`  —  `from src.python.core import TSCore`
+Import root: `vendor/TS-Core/src/python/`. Must add `vendor/TS-Core` to `sys.path`.
+
+### TSCore — `src/python/core.py`
 
 ```python
-ts = TSCore(damping=0.35, data_dir=Path("~/.tscore"), on_propagate=callback)
+import sys
+sys.path.insert(0, "vendor/TS-Core")
+from src.python.core import TSCore
+
+ts = TSCore(
+    damping=0.35,
+    data_dir=Path("~/.tscore"),
+    on_propagate=callback,        # optional: called after each propagate_wave()
+    kernel_wave12=False,          # enable 9-phase Wave 12 OS scheduler
+)
 ```
 
-Key methods:
-- `ts.add_node(node_id, activation, stability)` — register a node in the TS graph
-- `ts.add_edge(fr, to, weight)` — add constraint edge
-- `ts.propagate_wave(*, quiet) -> (tension: float, icarus_line: str)` — one tick; Rust if built, else Python
-- `ts.run_until_stable(max_ticks=64, eps=1e-5) -> int` — iterate until tension delta < eps
-- `ts.measure_tension() -> float` — std-dev of activations (scalar)
-- `ts.factory_evolve()` — append a new stability node (self-improvement tick)
-- Wave 12 OS path: `ts.kernel_wave12 = True` activates 9-phase strongest-node scheduler
+| Method | Description |
+|--------|-------------|
+| `ts.add_node(node_id, activation, stability)` | Register a node |
+| `ts.add_edge(fr, to, weight)` | Add a weighted constraint edge |
+| `ts.propagate_wave(*, quiet) → (tension, icarus_line)` | One tick; Rust if built |
+| `ts.run_until_stable(max_ticks, eps) → int` | Iterate until `|Δtension| < eps` |
+| `ts.measure_tension() → float` | Std-dev of node activations |
+| `ts.factory_evolve()` | Self-improvement tick: append a stability node |
+| `ts.graph["nodes"][id]["activation"] = v` | Direct graph mutation |
 
-### Wave 12 (11-step → 9-phase scheduler)
-`_python_wave12_propagate_blob` inside TSCore: 9 phases including strongest-node lock, 3×propagation, icarus wings seal, self-validation, pages-island persist.
-**"11-step WaveCycleRunner"** referenced in the plan = `run_until_stable(max_ticks=11)` plus one `factory_evolve()` per stable run.
+**Tension metric:** standard deviation of node activations — `sqrt(mean((a − ā)²))`. Converges toward 0 as the graph homogenises.
 
-### Language substrate node registration pattern
+### Language substrate registration pattern
+
 ```python
-# Phase 5 shim pattern — register attractor model as a native TS-Core node
 ts.add_node("llm_substrate", activation=0.5, stability=0.5)
 ts.add_edge("ts_native", "llm_substrate", weight=1.0)
-# Push tension scalar from sandbox into TS graph each step:
-ts.graph["nodes"]["llm_substrate"]["activation"] = float(sandbox_tension_val)
+
+# After each training batch:
+ts.graph["nodes"]["llm_substrate"]["activation"] = float(sandbox_window_tension)
 tension, _ = ts.propagate_wave(quiet=True)
+
+if tension > EVOLVE_THRESHOLD:
+    ts.factory_evolve()
 ```
 
-### Rust bindings (optional, Phase 2+)
-`src/rust/bindings.rs`, `kernel.rs`, `lib.rs` expose:
-- `rust_propagate_wave(graph_json, damping)` via `ts_core_kernel` PyO3 module
-- `rust_wave12_propagate(graph_json, damping)` — Wave 12 scheduler
+### Wave 12 (9-phase scheduler)
 
-Build: `cd vendor/TS-Core && maturin develop` (requires Rust toolchain + maturin).
-Not required for Phases 0–1.
+Activated via `ts.kernel_wave12 = True` or `TSCORE_KERNEL_WAVE12=1` env var. Runs a 9-phase strongest-node scheduler each tick:
+
+1. Strongest-node scan
+2. Strongest-node lock + spin budget
+3. Initial spin (damping × 1.12)
+4–6. Three standard propagation passes
+7. Icarus wings seal (stabilise low-stability nodes)
+8. Self-validation (tension mid-point check)
+9. Pages Island persist (final tension, write to JSONL history)
+
+### Rust bindings (Phase 2+)
+
+```bash
+cd vendor/TS-Core && maturin develop
+```
+
+Exposes `ts_core_kernel.rust_propagate_wave(graph_json, damping)` and `rust_wave12_propagate(graph_json, damping)`. TSCore auto-detects and uses them when present.
 
 ---
 
 ## ts-llm
 
-Python package: `vendor/ts-llm/attractor_llm/`
+Python package: `vendor/ts-llm/attractor_llm/`. Add `vendor/ts-llm` to `sys.path`.
 
-- `tokenizer.py` — `AttractorTokenizer` wrapping tiktoken or pure-Python BPE
-- `hierarchy.py` — `HierarchicalAttractorLLM` with explicit fast/slow timescale split
-- `torch_core.py` — low-rank diffusion operator, vectorized step functions
-- `torch_model.py` — full `TorchAttractorModel` with window dynamics
-- `datasets.py` — dataset helpers for real token streams
-- `training.py` — training loop helpers
+### Tokenizer — `attractor_llm/tokenizer.py`
 
-Reuse pattern: **import from submodule** (`sys.path.insert(0, "vendor/ts-llm")`).
+```python
+from attractor_llm.tokenizer import AttractorTokenizer
+
+tok = AttractorTokenizer(
+    encoding_name="gpt2",
+    vocab_cap=32768,       # max token ids exposed to the model
+    use_tiktoken=True,     # False = word-list fallback
+)
+
+ids = tok.encode("the quick brown fox")   # list[int]
+text = tok.decode(ids)                    # str
+n = tok.get_vocab_size()                  # int (= vocab_cap or fallback size)
+```
+
+### MultiHeadDynamics — `attractor_llm/torch_core.py`
+
+```python
+from attractor_llm.torch_core import MultiHeadDynamics
+
+mhd = MultiHeadDynamics(
+    state_dim=512,
+    num_heads=4,
+    rank=64,           # per-head low-rank factor
+    dt=0.09,
+    coupling=0.01,     # cross-head alignment pull
+)
+
+# One Euler step: (B, D) → (B, D)
+s_next = mhd.forward(state, signal)
+
+# Fixed-step convergence: (D,) or (V, D) → same shape
+attractor = mhd.converge_fixed(signal, num_steps=16)
+```
+
+**Diffusion per head:** `A_h = U_h V_h + diag(d_h)` — low-rank + diagonal. Negative eigenvalues ensure stability.
+
+### HierarchicalAttractorLLM — `attractor_llm/hierarchy.py`
+
+Full model with explicit fast/slow timescale split. Used as the architectural reference for Wave B vectorisation.
 
 ---
 
-## Integration map (Phases → APIs)
+## Integration map
 
-| Phase | Key API |
-|-------|---------|
+| Wave | Primary API used |
+|------|-----------------|
 | 0 smoke | `TSCore.run_until_stable`, `TSCore.measure_tension` |
-| 1 vocab | `attractor_llm.tokenizer.AttractorTokenizer` |
-| 2 vectorize | `attractor_llm.torch_core` low-rank diffusion |
-| 3 cache | internal `fast_state`/`slow_memory` tensors from `sandbox.py` |
-| 4 data | `attractor_llm.datasets` helpers |
-| 5 shim | `TSCore.add_node`, `TSCore.propagate_wave`, `TSCore.factory_evolve` |
-| 6 memory | `memory_manager.memory_tick`, `MemoryState` thresholds |
-| 7 serve | `TSCore` as sidecar, `sandbox.py` inference loop |
-| 8 eval | `TSCore.run_until_stable(max_ticks=11)` |
+| A tokenizer | `AttractorTokenizer.encode`, `AttractorTokenizer.decode` |
+| B vectorize | `MultiHeadDynamics.forward`, `MultiHeadDynamics.drift` |
+| C cache | Internal `fast_state` / `slow_memory` tensors from `sandbox.py` |
+| D data | `AttractorDataPipeline` (wave D) feeding `trajectory_contrastive_loss_and_logits` |
+| E shim | `TSCore.add_node`, `TSCore.propagate_wave`, `TSCore.factory_evolve` |
+| F memory | `memory_tick`, `MemoryState`, `ACTIVE_THRESHOLD` / `DORMANT_THRESHOLD` |
+| G serve | `TSCore` sidecar in `inference_server.py` |
+| H eval | `TSCore.run_until_stable(max_ticks=11)` |
