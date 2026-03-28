@@ -167,7 +167,9 @@ def run_wave_cycle(
 # --------------------------------------------------------------------------
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Wave H evaluation harness")
+    parser = argparse.ArgumentParser(
+        description="BoggersTheLanguageModel — Wave H evaluation harness"
+    )
     parser.add_argument("--corpus", default="data/corpus.txt")
     parser.add_argument("--val-fraction", type=float, default=0.2)
     parser.add_argument("--model-checkpoint", default=None,

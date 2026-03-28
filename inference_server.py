@@ -150,8 +150,8 @@ def create_app(state: AppState) -> "FastAPI":
         raise ImportError("FastAPI and uvicorn are required: pip install fastapi uvicorn")
 
     app = FastAPI(
-        title="idekatp inference server",
-        description="Attractor LM inference via FastAPI (Wave G)",
+        title="BoggersTheLanguageModel inference server",
+        description="BoggersTheLanguageModel — attractor LM inference via FastAPI (Wave G)",
         version="0.0.1",
     )
 
@@ -162,7 +162,7 @@ def create_app(state: AppState) -> "FastAPI":
         max_tokens: int = 64
         temperature: float = 1.0
         top_k: int = 28
-        model: str = "woke-attractor"
+        model: str = "boggers-the-language-model"
 
     class GenerateRequest(BaseModel):
         prompt: str = "the"
@@ -257,7 +257,7 @@ def create_app(state: AppState) -> "FastAPI":
 # --------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="idekatp inference server (Wave G)")
+    parser = argparse.ArgumentParser(description="BoggersTheLanguageModel inference server (Wave G)")
     parser.add_argument("--model-checkpoint", default=None, help="Path to .pt checkpoint file")
     parser.add_argument("--tokenizer", choices=("tiktoken", "fallback"), default="fallback")
     parser.add_argument("--vocab-cap", type=int, default=32768)

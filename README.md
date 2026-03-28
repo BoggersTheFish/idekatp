@@ -1,8 +1,8 @@
-# idekatp — Thinking System Language Substrate
+# BoggersTheLanguageModel — Thinking System Language Substrate
 
-A production-grade continuous attractor language model built without attention, transformers, or traditional LLM methods. State follows a physical **trajectory**; meaning is **path-dependent**. The architecture is driven by the **Propagate → Relax → Break → Evolve** cycle that powers the TS-OS.
+**BoggersTheLanguageModel** is a production-grade continuous attractor language model built without attention, transformers, or traditional LLM methods. State follows a physical **trajectory**; meaning is **path-dependent**. The architecture is driven by the **Propagate → Relax → Break → Evolve** cycle that powers the TS-OS.
 
-**Repository:** [github.com/BoggersTheFish/idekatp](https://github.com/BoggersTheFish/idekatp)
+**Source repository:** [github.com/BoggersTheFish/idekatp](https://github.com/BoggersTheFish/idekatp) (clone the repo as `idekatp`; the product name is BoggersTheLanguageModel.)
 
 ---
 
@@ -52,7 +52,7 @@ The network contains only:
 
 | File / Directory | Wave | Purpose |
 |---|---|---|
-| `sandbox.py` | Phase 0 | Single-file reference model: training, generation, all dynamics |
+| `sandbox.py` | Phase 0 | **BoggersTheLanguageModel** core: training, generation, all dynamics |
 | `smoke_test.py` | Phase 0 | 5-assertion integration test (dynamics + TSCore wave cycle) |
 | `wave_a_tokenizer.py` | A | tiktoken BPE helpers; training uses `sandbox._build_tokenizer()` |
 | `dynamics_vectorized.py` | B | Vectorized `MultiHeadDynamics` window step; `torch.compile` wrapper |
@@ -131,6 +131,7 @@ Or with Docker:
 
 ```bash
 docker compose up
+# Service name: boggers-language-model (see docker-compose.yml)
 ```
 
 Endpoints:

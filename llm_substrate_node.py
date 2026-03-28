@@ -1,5 +1,5 @@
 """
-Wave E — LLM Substrate Node.
+Wave E — LLM Substrate Node (BoggersTheLanguageModel).
 
 Registers the TorchAttractorLanguageModel as a native node inside the
 TSCore graph (vendor/TS-Core). Closes the loop:

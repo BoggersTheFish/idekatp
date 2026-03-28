@@ -1,7 +1,9 @@
-# Changelog
+# Changelog — BoggersTheLanguageModel
 
 All notable changes to this project are documented here.
 Format: [Wave / Phase] — description — date.
+
+The project is documented as **BoggersTheLanguageModel**; canonical source is [github.com/BoggersTheFish/idekatp](https://github.com/BoggersTheFish/idekatp).
 
 ---
 

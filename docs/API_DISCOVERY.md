@@ -5,7 +5,7 @@ Last verified: March 2026.
 
 ---
 
-## This repository — `sandbox.py` integration surface
+## This repository (BoggersTheLanguageModel) — `sandbox.py` integration surface
 
 | Entry | Role |
 |-------|------|

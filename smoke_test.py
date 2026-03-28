@@ -1,5 +1,5 @@
 """
-Phase 0 smoke test — run via:  python smoke_test.py
+BoggersTheLanguageModel — Phase 0 smoke test — run via:  python smoke_test.py
 
 Verifies:
 1. sandbox.py model instantiates and runs one wave cycle on the tiny corpus.

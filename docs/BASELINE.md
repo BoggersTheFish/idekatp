@@ -1,6 +1,6 @@
-# Phase 0 — Baseline and success criteria
+# Phase 0 — Baseline and success criteria (BoggersTheLanguageModel)
 
-Phase 0 locks a **reproducible reference** before scaling data, windows, or model size. Use it to answer “did the change help?” without guessing.
+Phase 0 locks a **reproducible reference** for **BoggersTheLanguageModel** (`sandbox.py`) before scaling data, windows, or model size. Use it to answer “did the change help?” without guessing.
 
 ## How to record a baseline run
 

@@ -1,7 +1,7 @@
 version: "3.9"
 
 services:
-  woke-llm:
+  boggers-language-model:
     build: .
     ports:
       - "8000:8000"

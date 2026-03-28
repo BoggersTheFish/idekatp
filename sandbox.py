@@ -1338,7 +1338,7 @@ def _save_checkpoint(
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Attractor dynamics language model (see README)."
+        description="BoggersTheLanguageModel — attractor dynamics training (see README)."
     )
     # ---- existing args ----
     parser.add_argument("--corpus", type=Path, default=None,
