@@ -1,0 +1,26 @@
+{
+  "base": {
+    "val_ppl": 506.3609583317438,
+    "mean_tension": 0.3182048797607422,
+    "traj_contrast": 0.16990748047828674
+  },
+  "wave_cycle": {
+    "ts_tension_before": 0.14900529290886644,
+    "ts_tension_after": 0.000480122089647376,
+    "ts_ticks": 16,
+    "mean_lang_tension": 0.3217978060245514,
+    "evolve_count": 5
+  },
+  "post": {
+    "val_ppl": 551.2770364882846,
+    "mean_tension": 0.3193734288215637,
+    "traj_contrast": 0.18668830394744873
+  },
+  "config": {
+    "corpus": "data/corpus.txt",
+    "val_fraction": 0.2,
+    "wave_cycles": 11,
+    "window_size": 6,
+    "checkpoint": null
+  }
+}
