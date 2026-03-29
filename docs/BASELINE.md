@@ -2,6 +2,8 @@
 
 Phase 0 locks a **reproducible reference** for **BoggersTheLanguageModel** (`sandbox.py`) before scaling data, windows, or model size. Use it to answer “did the change help?” without guessing.
 
+For runs on a **public or large text corpus** (Hugging Face TinyStories / FineWeb-Edu or your own files), follow README → [First real training run](https://github.com/BoggersTheFish/BoggersTHeLLM#first-real-training-run-public-corpus--checkpoint--eval-json). Use **`--eval-results-json`** with `sandbox.py` to write val CE / val PPL and the checkpoint path alongside training.
+
 ## How to record a baseline run
 
 1. From the repo root, with your venv active:
