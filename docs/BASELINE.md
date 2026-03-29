@@ -127,3 +127,18 @@ One prompt with `log_dynamics`-style metrics at end of training:
 ## Example row (illustrative only)
 
 Older CE-only runs might show different `mean_loss` semantics. After scaling data, you want **train_CE** and (with a real val split) **val_CE** to move together sensibly, and the three prompt outputs to read **less repetitively** than the snapshot above.
+
+--- Phase 0 baseline (copy into docs/BASELINE.md) ---
+time_utc: 2026-03-29T09:14:21+00:00
+git: 7b163f1
+corpus: data/cache/hf/tinystories_d99f33dbe8bd797f31c8.txt
+seed: 42 val_fraction: 0.1 effective_stream_val_fraction: 0.100005 epoch_copies: 2
+loss_mode: trajectory token_aux_ce: 0.2
+window_size: 8 num_dynamics_steps: 16 num_epochs: 1
+last_epoch: 1/1 windows: 17536 epoch_sec: 478.5
+train_sec_total: 529.1
+mean_loss (objective): 2.3759
+train_CE: 5.9919 val_CE: 5.5265
+train_traj_contrast: 0.105756 val_traj_contrast: 0.112059
+--- end baseline ---
+

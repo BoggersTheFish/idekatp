@@ -1,0 +1,24 @@
+{
+  "base": {
+    "val_ce": 5.517649981826774,
+    "val_ppl": 249.04907909138095,
+    "val_traj_contrast": 0.11037353035821443,
+    "val_windows": 1939,
+    "val_metrics_reliable": true
+  },
+  "checkpoint": "checkpoints/first_real_release/ckpt_step0000274.pt",
+  "config": {
+    "dataset_source": "tinystories",
+    "corpus_path": "data/cache/hf/tinystories_d99f33dbe8bd797f31c8.txt",
+    "stream_source_path": "data/cache/hf/tinystories_d99f33dbe8bd797f31c8.txt",
+    "tokenizer": "tiktoken",
+    "vocab_cap": 8192,
+    "window_size": 8,
+    "max_epochs": 1,
+    "val_fraction": 0.1,
+    "loss_mode": "trajectory",
+    "use_goat_memory": false,
+    "use_substrate": false,
+    "seed": 42
+  }
+}
