@@ -303,7 +303,60 @@ python3 sandbox.py --corpus data/generated.txt
 - **Architecture and tension:** [Architecture overview](#architecture-overview) and [Tension semantics](#tension-semantics).
 - **Loss function:** [Training objective](#training-objective).
 - **Per-flag list:** [CLI reference](#cli-reference) and [Epoch metrics CSV columns](#epoch-metrics-csv-columns).
+- **Scaling and practical training:** [Scaling and training tips](#scaling-and-training-tips).
+- **Lightweight diagnostics:** [Debug mode](#debug-mode).
 - **Module-by-module history:** [Wave-by-wave implementation log](#wave-by-wave-implementation-log).
+
+### Scaling and training tips
+
+**Data and validation**
+
+- Prefer **stream mode** (default): one token sequence and sliding windows scale to large corpora. Use **`--dataset-source tinystories`** or **`fineweb-edu`** for a first serious run, or a large UTF-8 **`--corpus`** file / directory.
+- For stable **val CE / perplexity**, use enough hold-out tokens: **`--val-fraction 0.1`**–**`0.3`**. If startup warns **`val_windows < 50`**, treat metrics as noisy until you add text or increase the fraction.
+- **`--no-synthetic-fallback`** fails fast if the corpus is missing or tiny—useful before long GPU jobs.
+
+**Batch size, window, and steps**
+
+- **Trajectory mode** requires **`--trajectory-batch-size` ≥ 2** (negatives are drawn inside the batch). Larger batches stabilise contrastive training but cost more memory.
+- **Window size** (`--window-size`): wider context increases compute per step roughly linearly in `W` (embedding is `W×D`, dynamics run up to **`--num-dynamics-steps`** outer steps). Start with the default or `8`; increase when data and VRAM allow.
+- **`--num-dynamics-steps`**: more steps mean deeper relaxation per window; dimishing returns once tension curves flatten—watch **`mean_final_step_tension`** in epoch CSV.
+
+**Throughput and hardware**
+
+- Use **`--device cuda`** when available. **`torch.compile`** is applied automatically on CUDA (vectorized path compiles **`_step` only**); first epoch can be slower while kernels warm up.
+- **`--dynamics vectorized`** can help on GPU at larger `D`; simple dynamics are fine for CPU smoke tests and small models.
+
+**Optimisation and stability**
+
+- **`--lr`** 1e-3 with **`StepLR`** (`--lr-decay-every`, `--lr-gamma`) is a reasonable default; lower LR if loss spikes or **`grad_norm`** explodes (see **`--debug`**).
+- Keep at least one of **`--token-aux-ce`** or **`--readout-aux-alpha`** on in trajectory mode so the readout heads receive gradients (the script warns if both are zero).
+- **Phase 1 window interaction** (`--phase1-enable-window-interaction`) plus **Phase 2** **`--phase2-interaction-reg-weight`** and optional **`--phase2-interaction-decay-tau`** help keep coupling matrix **`C`** from drifting; enable when you see unstable window norms.
+- **Checkpoints:** **`--checkpoint-dir`** + **`--save-every`** for long runs; **`--resume-checkpoint`** restores weights and optimizer. Newer code may add parameters—use **`strict=False`** in custom loaders if needed.
+
+**Logging for analysis**
+
+- **`--epoch-metrics-csv`**: one row per epoch (loss, CE, tension, TSCore fields).
+- **`--phase05-batch-metrics-csv`** (with **`--phase05-log-metrics`** implied): per-batch diagnostics; plot with **`scripts/plot_phase05_metrics.py`**.
+
+### Debug mode
+
+Pass **`--debug`** to print a **small number of `[debug]` lines** at meaningful points (no per-step spam):
+
+| When | What you see |
+|------|----------------|
+| After **resume** (if used) | Starting epoch index and `global_step`. |
+| After **model → device** | Parameter count, `state_dim`, train window size, max window steps. |
+| After **integrations** | Dynamics class name, `torch.compile` outcome, substrate / GOAT on or off. |
+| Before the **training loop** | Epoch range, starting `global_step`, `loss_mode`. |
+| **Pipeline** | Streaming on/off, batch size, estimated batches per epoch (or legacy fallback). |
+| **Each epoch** | Estimated batches, `report_every` (matches progress snippet cadence), current LR. |
+| **First batch only** (trajectory mode) | Loss, **gradient L2 norm**, whether readout logits are all finite. |
+| **End of each epoch** | Batch count, approximate window-updates, batches per second. |
+| **After training** | Final `global_step`, last epoch id, last mean loss and train CE. |
+
+**`--quick-test --debug`** prints one line before the sanity checks then exits.
+
+Use this when verifying a new machine, a resumed run, or tracking down NaNs; for full traces use **`--phase05-batch-metrics-csv`** instead.
 
 ---
 
@@ -650,6 +703,7 @@ Logging:
 
 Misc:
   --quick-test               Window sanity checks, exit
+  --debug                    Concise [debug] lines at setup, each epoch, first-batch grad norm (trajectory)
 ```
 
 ### Epoch metrics CSV columns

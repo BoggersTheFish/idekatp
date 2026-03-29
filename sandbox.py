@@ -2305,6 +2305,11 @@ def _save_checkpoint(
     return ckpt_path
 
 
+def _training_debug(debug: bool, msg: str) -> None:
+    if debug:
+        print(f"[debug] {msg}", flush=True)
+
+
 def phase05_config_from_args(args: argparse.Namespace) -> Phase05Config:
     tw: tuple[float, float, float] | None = None
     raw = getattr(args, "phase05_tension_w", None)
@@ -2406,6 +2411,11 @@ def main() -> None:
         help="Batch size for trajectory contrastive training (need ≥2).")
     parser.add_argument("--quick-test", action="store_true",
         help="Window/context sanity checks and exit.")
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Concise diagnostics: setup summary, each epoch head/tail, first-batch grad norm (trajectory mode).",
+    )
     parser.add_argument("--loss-mode", choices=("trajectory", "ce"), default="trajectory")
     parser.add_argument("--token-aux-ce", type=float, default=TOKEN_AUX_CE_WEIGHT_DEFAULT,
         help="trajectory mode: aux readout_window CE weight.")
@@ -2749,11 +2759,26 @@ def main() -> None:
             f"Resumed from {args.resume_checkpoint} (step={global_step}, epoch={start_epoch})",
             flush=True,
         )
+        if args.debug:
+            _training_debug(
+                True,
+                f"resume: continuing from epoch index {start_epoch}  global_step={global_step}",
+            )
 
     # ---- Phase 3: move to device ----
     model = model.to(device)
+    _compile_status = "skipped"
+    if args.debug:
+        _np = sum(p.numel() for p in model.parameters())
+        _training_debug(
+            True,
+            f"model params={_np:,}  state_dim={model.state_dim}  "
+            f"train_window={model.train_window_size}  max_window_steps={model.max_window_steps}",
+        )
 
     if args.quick_test:
+        if args.debug:
+            _training_debug(True, "quick_test: window/context sanity checks then exit")
         run_quick_window_tests(model)
         return
 
@@ -2783,12 +2808,16 @@ def main() -> None:
             if args.dynamics == "vectorized" and hasattr(dyn, "_step"):
                 try:
                     dyn._step = torch.compile(dyn._step, mode="reduce-overhead")  # type: ignore[assignment]
+                    _compile_status = "vectorized _step"
                 except Exception as _ve:
                     print(f"[step-2] Warning: vectorized _step compile skipped ({_ve})", flush=True)
+                    _compile_status = "vectorized _step failed"
             else:
                 model.dynamics = torch.compile(model.dynamics, mode="reduce-overhead")
+                _compile_status = "full dynamics"
         except Exception as _comp_err:
             print(f"[step-2] Warning: torch.compile skipped ({_comp_err})", flush=True)
+            _compile_status = f"error ({_comp_err})"
 
     # ---- Phase 7: TSCore substrate ----
     substrate = None
@@ -2808,6 +2837,17 @@ def main() -> None:
             print("[phase-8] GOAT memory manager active", flush=True)
         except Exception as _goat_err:
             print(f"[phase-8] Warning: GOAT memory unavailable ({_goat_err})", flush=True)
+
+    if args.debug:
+        _training_debug(
+            True,
+            f"dynamics={type(model.dynamics).__name__}  torch.compile={_compile_status}",
+        )
+        _training_debug(
+            True,
+            f"integrations: substrate={substrate is not None}  "
+            f"goat={getattr(model, '_goat_mgr', None) is not None}",
+        )
 
     # ---- checkpoint dir ----
     ckpt_dir = args.checkpoint_dir or (_REPO_ROOT / "checkpoints")
@@ -3011,6 +3051,19 @@ def main() -> None:
         f"batch={traj_batch_size}, lr={args.lr}, device={device})...",
         flush=True,
     )
+    if args.debug:
+        if pipeline is not None:
+            try:
+                _est = pipeline.epoch_count_estimate()
+            except Exception:
+                _est = -1
+            _training_debug(
+                True,
+                f"pipeline streaming={getattr(pipeline, 'streaming_dataset', '?')} "
+                f"batch_size={getattr(pipeline, 'batch_size', '?')} ~batches/epoch≈{_est}",
+            )
+        else:
+            _training_debug(True, "pipeline: legacy in-memory iterator (no AttractorDataPipeline)")
     if args.loss_mode == "trajectory" and args.token_aux_ce <= 0 and args.readout_aux_alpha <= 0:
         print(
             "Warning: trajectory mode with token_aux_ce=0 and readout_aux_alpha=0 — "
@@ -3041,6 +3094,13 @@ def main() -> None:
         phase05_csv_writer = csv.writer(phase05_csv_fp)
         if new_p05:
             phase05_csv_writer.writerow(PHASE05_BATCH_CSV_HEADER)
+
+    if args.debug:
+        _training_debug(
+            True,
+            f"train loop: epochs {start_epoch + 1}..{start_epoch + num_epochs}  "
+            f"global_step_start={global_step}  loss_mode={args.loss_mode}",
+        )
 
     for epoch in range(start_epoch, start_epoch + num_epochs):
         t_ep0 = time.perf_counter()
@@ -3085,6 +3145,12 @@ def main() -> None:
             report_every = max(1, n_est // 10)
 
         print(f"  epoch {epoch + 1}/{start_epoch + num_epochs}", flush=True)
+        if args.debug:
+            _training_debug(
+                True,
+                f"epoch {epoch + 1}: ~{n_est} batches  report_every={report_every}  "
+                f"lr={optimizer.param_groups[0]['lr']:.6g}",
+            )
 
         # Bug 4: accumulate real train CE from batch readout logits.
         train_ce_sum = 0.0
@@ -3160,6 +3226,16 @@ def main() -> None:
 
                 optimizer.zero_grad(set_to_none=True)
                 loss.backward()
+                if args.debug and batch_idx == 0:
+                    _gn = float(
+                        torch.nn.utils.clip_grad_norm_(model.parameters(), float("inf"))
+                    )
+                    _lf = float(loss.detach()) if torch.isfinite(loss.detach()) else float("nan")
+                    _ok = bool(torch.isfinite(logits).all().item())
+                    _training_debug(
+                        True,
+                        f"first batch: loss={_lf:.4f}  grad_norm={_gn:.4f}  logits_all_finite={_ok}",
+                    )
                 optimizer.step()
                 global_step += 1
 
@@ -3325,6 +3401,13 @@ def main() -> None:
                 f"mean loss={mean_loss:.4f}  |  train CE={train_ce:.4f}{val_msg}",
                 flush=True,
             )
+        if args.debug and batch_idx >= 0:
+            _bps = (batch_idx + 1) / max(ep_sec, 1e-9)
+            _training_debug(
+                True,
+                f"epoch {epoch + 1} summary: batches={batch_idx + 1}  "
+                f"window_updates≈{n_windows}  throughput={_bps:.2f} batch/s",
+            )
 
         # Bug 5: log TSCore evolve_count and last_ts_tension.
         ep_ts_tension: float = 0.0
@@ -3410,6 +3493,12 @@ def main() -> None:
 
     train_sec_total = time.perf_counter() - t_train0
     print(f"Pre-training done in {train_sec_total:.1f}s total.", flush=True)
+    if args.debug:
+        _training_debug(
+            True,
+            f"finished global_step={global_step}  last_epoch={last_epoch_num}  "
+            f"last_mean_loss={last_mean_loss:.4f}  last_train_ce={last_train_ce:.4f}",
+        )
 
     # Phase 4: final checkpoint
     final_ckpt_path = _save_checkpoint(
