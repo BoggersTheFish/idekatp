@@ -147,25 +147,29 @@ class VectorizedWindowDynamics(nn.Module):
         _tol = tol if tol is not None else torch.tensor(0.05, device=S.device, dtype=S.dtype)
         _thigh = thigh if thigh is not None else torch.tensor(0.18, device=S.device, dtype=S.dtype)
 
-        tension_curve: list[float] = []
-        consecutive_low_t_steps = 0
+        tension_curve_tensors: list[torch.Tensor] = []
+        zero_long = torch.zeros((), device=S.device, dtype=torch.long)
+        consecutive_low_t_steps_t = zero_long.clone()
 
         for _ in range(self.max_steps):
             S = self._step(S, signal)
             T = _window_tension(S)
-            T_mean = float(T.mean().item())
+            t_mean = T.mean()
             if record_tension_log:
-                tension_curve.append(T_mean)
-            if T_mean < 0.08:
-                consecutive_low_t_steps += 1
-            else:
-                consecutive_low_t_steps = 0
+                tension_curve_tensors.append(t_mean.detach())
+            is_low = t_mean < 0.08
+            consecutive_low_t_steps_t = torch.where(
+                is_low,
+                consecutive_low_t_steps_t + 1,
+                torch.zeros((), device=S.device, dtype=torch.long),
+            )
+            need_jitter = is_low & (consecutive_low_t_steps_t >= 4)
             # Extra stochastic break for stuck low-tension attractors (GOAT DORMANT→ACTIVE jitter)
-            if T_mean < 0.08 and consecutive_low_t_steps >= 4:
+            if bool(need_jitter.item()):
                 noise = torch.randn_like(S) * 0.015
                 S = S + noise
                 # GOAT transition: use TorchAttractorLanguageModel.run_window_dynamics when training (.step path)
-                consecutive_low_t_steps = 0
+                consecutive_low_t_steps_t = zero_long.clone()
             if (T < _tol).all():
                 break
             if (T > _thigh).any():
@@ -173,6 +177,7 @@ class VectorizedWindowDynamics(nn.Module):
                 S = S + noise
                 S = S / (torch.linalg.vector_norm(S, dim=-1, keepdim=True) + 1e-8)
 
+        tension_curve = [float(x) for x in tension_curve_tensors]
         if single:
             S = S.squeeze(0)
         return S, tension_curve

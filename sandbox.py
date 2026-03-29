@@ -569,18 +569,20 @@ class TorchAttractorLanguageModel(nn.Module):
         B, W, D = S.shape
         assert W == self.train_window_size
         step_logs: list[dict] | None = [] if collect_metrics else None
-        tension_curve: list[float] = []
+        tension_curve_tensors: list[torch.Tensor] = []
         tol = self.window_tension_tol.to(device=S.device, dtype=S.dtype)
         thigh = self.window_tension_high.to(device=S.device, dtype=S.dtype)
-        consecutive_low_t_steps = 0
+        zero_long = torch.zeros((), device=S.device, dtype=torch.long)
+        consecutive_low_t_steps_t = zero_long.clone()
         for step in range(self.max_window_steps):
             S0 = S.detach().clone() if collect_metrics else None
             S = self._single_window_step(S, context_ids=context_ids)
             T = self.compute_window_tension(S)
-            self._last_window_tension_mean = T.mean().detach()
+            t_mean = T.mean()
+            self._last_window_tension_mean = t_mean.detach()
             self._last_adaptive_window_steps = step + 1
             if record_tension_log:
-                tension_curve.append(float(T.mean().detach()))
+                tension_curve_tensors.append(t_mean.detach())
             if collect_metrics and S0 is not None and step_logs is not None:
                 with torch.no_grad():
                     diff = S - S0
@@ -600,18 +602,20 @@ class TorchAttractorLanguageModel(nn.Module):
                             "mean_row_norm": mn,
                         }
                     )
-            T_mean = float(T.mean().detach())
-            if T_mean < 0.08:
-                consecutive_low_t_steps += 1
-            else:
-                consecutive_low_t_steps = 0
+            is_low = t_mean < 0.08
+            consecutive_low_t_steps_t = torch.where(
+                is_low,
+                consecutive_low_t_steps_t + 1,
+                torch.zeros((), device=S.device, dtype=torch.long),
+            )
+            need_jitter = is_low & (consecutive_low_t_steps_t >= 4)
             # Extra stochastic break for stuck low-tension attractors (GOAT DORMANT→ACTIVE jitter)
-            if T_mean < 0.08 and consecutive_low_t_steps >= 4:
+            if bool(need_jitter.item()):
                 noise = torch.randn_like(S) * 0.015
                 S = S + noise
                 self._goat_transition_context_ids = context_ids
                 self.goat_memory.apply_transition(S[:, -1, :].mean(dim=0), "DORMANT", "ACTIVE")
-                consecutive_low_t_steps = 0
+                consecutive_low_t_steps_t = zero_long.clone()
             if (T < tol).all():
                 break
             if (T > thigh).any():
@@ -619,7 +623,9 @@ class TorchAttractorLanguageModel(nn.Module):
                 S = S + noise
                 S = S / (torch.linalg.vector_norm(S, dim=-1, keepdim=True) + 1e-8)
         if record_tension_log:
-            self._last_window_tension_curve = tension_curve
+            self._last_window_tension_curve = [
+                float(x) for x in tension_curve_tensors
+            ]
         if single:
             S = S.squeeze(0)
         return S, step_logs
