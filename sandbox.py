@@ -10,6 +10,8 @@ import subprocess
 import sys
 import time
 from collections import Counter
+
+from tqdm import tqdm
 from pathlib import Path
 
 import torch
@@ -96,7 +98,7 @@ WINDOW_TENSION_TOL_GEOMETRY = 0.05
 WINDOW_TENSION_HIGH_GEOMETRY = 0.18
 WINDOW_TENSION_TOL_ENTROPY = 0.75
 WINDOW_TENSION_HIGH_ENTROPY = 0.92
-TRAJECTORY_BATCH_SIZE_DEFAULT = 16
+TRAJECTORY_BATCH_SIZE_DEFAULT = 64
 # Below this many val windows, val CE / PPL are not statistically reliable.
 MIN_VAL_WINDOWS = 50
 MIN_VAL_WINDOWS_RELIABLE = MIN_VAL_WINDOWS  # legacy alias
@@ -1994,7 +1996,7 @@ def main() -> None:
         max_batch_loss_epoch = float("nan")
         final_tension_values: list[float] = []
         max_batch_loss = -1.0
-        bi = 0
+        batch_idx = -1
 
         if pipeline is not None:
             # ---- Phase 2: streaming data pipeline ----
@@ -2043,7 +2045,11 @@ def main() -> None:
         _last_batch_targets: list[int] = []
 
         if args.loss_mode == "trajectory":
-            for contexts, targets in batch_iter:
+            for batch_idx, (contexts, targets) in tqdm(
+                enumerate(batch_iter),
+                total=n_est,
+                desc=f"epoch {epoch + 1}/{num_epochs}",
+            ):
                 if len(contexts) < 2:
                     contexts = contexts * 2
                     targets = targets * 2
@@ -2094,7 +2100,7 @@ def main() -> None:
                     max_batch_loss = li
                 if args.log_hard_batch_loss_above > 0 and li >= args.log_hard_batch_loss_above:
                     print(
-                        f"    [hard batch] bi={bi + 1} loss={li:.4f}  "
+                        f"    [hard batch] bi={batch_idx + 1} loss={li:.4f}  "
                         f"ctx0={contexts[0][:6]}",
                         flush=True,
                     )
@@ -2129,25 +2135,28 @@ def main() -> None:
                     _save_checkpoint(model, optimizer, global_step, epoch, args, ckpt_dir)
 
                 ts = model._last_adaptive_window_steps
-                if bi % report_every == 0:
+                if batch_idx % report_every == 0:
                     if curve:
                         cs = "[" + ", ".join(f"{x:.4f}" for x in curve) + "]"
                         print(
-                            f"    [batch {bi + 1}] loss={li:.4f}  T={cs}  steps={ts}",
+                            f"    [batch {batch_idx + 1}] loss={li:.4f}  T={cs}  steps={ts}",
                             flush=True,
                         )
                     else:
-                        print(f"    [batch {bi + 1}] loss={li:.4f}", flush=True)
-                bi += 1
+                        print(f"    [batch {batch_idx + 1}] loss={li:.4f}", flush=True)
 
-            mean_loss = loss_sum / max(bi, 1)
+            mean_loss = loss_sum / max(batch_idx + 1, 1)
             if final_tension_values:
                 mean_final_step_tension = float(statistics.mean(final_tension_values))
-            max_batch_loss_epoch = max_batch_loss if bi > 0 else float("nan")
-            n_windows = bi * traj_batch_size
+            max_batch_loss_epoch = max_batch_loss if batch_idx >= 0 else float("nan")
+            n_windows = (batch_idx + 1) * traj_batch_size
 
         else:  # CE mode
-            for contexts, targets in batch_iter:
+            for batch_idx, (contexts, targets) in tqdm(
+                enumerate(batch_iter),
+                total=n_est,
+                desc=f"epoch {epoch + 1}/{num_epochs}",
+            ):
                 for context, target_id in zip(contexts, targets):
                     logits = model.forward_training_window(context)
                     prev_id = context[-1]
@@ -2190,11 +2199,10 @@ def main() -> None:
                             pass
                     if args.save_every > 0 and global_step % args.save_every == 0:
                         _save_checkpoint(model, optimizer, global_step, epoch, args, ckpt_dir)
-                bi += 1
 
-            mean_loss = loss_sum / max(bi * traj_batch_size, 1)
+            mean_loss = loss_sum / max((batch_idx + 1) * traj_batch_size, 1)
             max_batch_loss_epoch = float("nan")
-            n_windows = bi * traj_batch_size
+            n_windows = (batch_idx + 1) * traj_batch_size
 
         ep_sec = time.perf_counter() - t_ep0
 
