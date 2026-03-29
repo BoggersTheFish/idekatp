@@ -281,6 +281,10 @@ class TorchAttractorLanguageModel(nn.Module):
                             state=MemoryState.ACTIVE,
                             activation=max(float(n.activation), float(mgr.active_threshold)),
                         )
+        try:
+            mgr.invalidate_bonus_cache()
+        except Exception:
+            pass
         return fast_state
 
     def reset_readout_trajectory(self):
@@ -511,14 +515,15 @@ class TorchAttractorLanguageModel(nn.Module):
         self,
         S: torch.Tensor,
         context_ids: list[list[int]] | None = None,
+        context_tensor: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """One coupling + relaxation step; S is (B, W, D).
 
         Uses the unified dynamics.step() interface so both SimpleAttractorDynamics
         and VectorizedWindowDynamics work without attribute access.
 
-        If GOAT memory is active and context_ids is provided, an activation-bonus
-        signal is injected at each token position before the dynamics step.
+        If GOAT memory is active and context_tensor is provided (B, W) long), an
+        activation-bonus signal is gathered on GPU (no per-step Python over B×W).
         """
         B, W, D = S.shape
         assert W == self.train_window_size
@@ -530,15 +535,13 @@ class TorchAttractorLanguageModel(nn.Module):
 
         # Build GOAT activation-bonus signal (Bug 1 fix).
         # bonuses[b, t] is a scalar; we broadcast it across the D dimension.
-        if self._goat_mgr is not None and context_ids is not None:
-            bonuses = torch.zeros(B, W, 1, device=S.device, dtype=S.dtype)
-            for b in range(B):
-                ids_b = context_ids[b]
-                for t, tid in enumerate(ids_b):
-                    bonus = float(self._goat_mgr.activation_bonus(tid))
-                    if bonus > 0.0:
-                        bonuses[b, t, 0] = bonus
-            signal = bonuses.expand(B, W, D)
+        if self._goat_mgr is not None and context_tensor is not None:
+            V = len(self._goat_mgr.nodes)
+            valid = (context_tensor >= 0) & (context_tensor < V)
+            safe = context_tensor.clamp(min=0, max=max(V - 1, 0))
+            bv = self._goat_mgr.bonus_tensor(S.device, S.dtype)
+            bonuses_2d = bv[safe] * valid.to(dtype=S.dtype)
+            signal = bonuses_2d.unsqueeze(-1).expand(B, W, D)
         else:
             signal = torch.zeros(B, W, D, device=S.device, dtype=S.dtype)
 
@@ -572,13 +575,21 @@ class TorchAttractorLanguageModel(nn.Module):
         assert W == self.train_window_size
         step_logs: list[dict] | None = [] if collect_metrics else None
         tension_curve_tensors: list[torch.Tensor] = []
-        tol = self.window_tension_tol.to(device=S.device, dtype=S.dtype)
         thigh = self.window_tension_high.to(device=S.device, dtype=S.dtype)
         zero_long = torch.zeros((), device=S.device, dtype=torch.long)
         consecutive_low_t_steps_t = zero_long.clone()
+        context_tensor: torch.Tensor | None = None
+        if context_ids is not None:
+            context_tensor = torch.as_tensor(
+                context_ids, dtype=torch.long, device=S.device
+            )
+            if context_tensor.dim() == 1:
+                context_tensor = context_tensor.unsqueeze(0)
         for step in range(self.max_window_steps):
             S0 = S.detach().clone() if collect_metrics else None
-            S = self._single_window_step(S, context_ids=context_ids)
+            S = self._single_window_step(
+                S, context_ids=context_ids, context_tensor=context_tensor
+            )
             T = self.compute_window_tension(S)
             t_mean = T.mean()
             self._last_window_tension_mean = t_mean.detach()
@@ -612,18 +623,22 @@ class TorchAttractorLanguageModel(nn.Module):
             )
             need_jitter = is_low & (consecutive_low_t_steps_t >= 4)
             # Extra stochastic break for stuck low-tension attractors (GOAT DORMANT→ACTIVE jitter)
-            if bool(need_jitter.item()):
-                noise = torch.randn_like(S) * 0.015
-                S = S + noise
+            S = S + torch.randn_like(S) * (need_jitter.to(dtype=S.dtype) * 0.015)
+            consecutive_low_t_steps_t = torch.where(need_jitter, zero_long, consecutive_low_t_steps_t)
+            # GOAT node updates are Python-side; one scalar sync only when GOAT is on and jitter fires.
+            if (
+                self._goat_mgr is not None
+                and context_ids is not None
+                and bool(need_jitter.item())
+            ):
                 self._goat_transition_context_ids = context_ids
-                self.goat_memory.apply_transition(S[:, -1, :].mean(dim=0), "DORMANT", "ACTIVE")
-                consecutive_low_t_steps_t = zero_long.clone()
-            if (T < tol).all():
-                break
-            if (T > thigh).any():
-                noise = 0.01 * torch.randn_like(S)
-                S = S + noise
-                S = S / (torch.linalg.vector_norm(S, dim=-1, keepdim=True) + 1e-8)
+                self.goat_memory.apply_transition(
+                    S[:, -1, :].mean(dim=0), "DORMANT", "ACTIVE"
+                )
+            high = (T > thigh).any()
+            S_hi = S + 0.01 * torch.randn_like(S)
+            S_hi = S_hi / (torch.linalg.vector_norm(S_hi, dim=-1, keepdim=True) + 1e-8)
+            S = torch.where(high.view(1, 1, 1), S_hi, S)
         if record_tension_log:
             self._last_window_tension_curve = [
                 float(x) for x in tension_curve_tensors
@@ -1018,24 +1033,23 @@ def step_state_batch(
     nonlinear_gain scales tanh(c) (window training uses >1 to resist row collapse).
     """
     if state_batch.dim() == 3:
-        B = state_batch.size(0)
-        outs = [
-            step_state_batch(
-                state_batch[b],
-                diffusion,
-                applied_signal_batch[b],
-                dt,
-                cubic_scale,
-                beta=beta,
-                noise_scale=noise_scale,
-                lambda_decay=lambda_decay,
-                signal_scale=signal_scale,
-                state_norm_eps=state_norm_eps,
-                nonlinear_gain=nonlinear_gain,
-            )
-            for b in range(B)
-        ]
-        return torch.stack(outs, dim=0)
+        B, W, D = state_batch.shape
+        flat = state_batch.reshape(B * W, D)
+        sig_flat = applied_signal_batch.reshape(B * W, D)
+        out_flat = step_state_batch(
+            flat,
+            diffusion,
+            sig_flat,
+            dt,
+            cubic_scale,
+            beta=beta,
+            noise_scale=noise_scale,
+            lambda_decay=lambda_decay,
+            signal_scale=signal_scale,
+            state_norm_eps=state_norm_eps,
+            nonlinear_gain=nonlinear_gain,
+        )
+        return out_flat.reshape(B, W, D)
     c = state_batch - state_batch.mean(dim=-1, keepdim=True)
     nonlinear = cubic_scale * float(nonlinear_gain) * torch.tanh(c)
     scaled_signal = signal_scale * applied_signal_batch
@@ -1062,13 +1076,21 @@ def positional_coupling_delta(
     Base: exp(-gamma * |i-j|); optional asymmetry scales left vs right neighbors (sign j-i).
     """
     if S.dim() == 3:
-        return torch.stack(
-            [
-                positional_coupling_delta(S[b], position_gamma, position_asym)
-                for b in range(S.size(0))
-            ],
-            dim=0,
-        )
+        B, W, D = S.shape
+        device = S.device
+        dtype = S.dtype
+        idx = torch.arange(W, device=device, dtype=dtype)
+        rel = (idx.unsqueeze(0) - idx.unsqueeze(1)).abs()
+        weights = torch.exp(-position_gamma * rel) * (1.0 - torch.eye(W, device=device, dtype=dtype))
+        if position_asym is not None:
+            ji = idx.unsqueeze(0) - idx.unsqueeze(1)
+            sign_ji = torch.sign(ji)
+            sign_ji = torch.where(ji == 0, torch.zeros_like(sign_ji), sign_ji)
+            asym_fac = 1.0 + POSITION_ASYM_STRENGTH * torch.tanh(position_asym) * sign_ji
+            weights = weights * asym_fac.clamp(min=0.2)
+        wsum = weights.sum(dim=1, keepdim=True)
+        weighted = torch.einsum("ij,bjd->bid", weights, S)
+        return weighted - wsum.unsqueeze(0) * S
     W, _D = S.shape
     device = S.device
     dtype = S.dtype

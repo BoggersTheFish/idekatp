@@ -28,6 +28,8 @@ from __future__ import annotations
 
 import sys
 from dataclasses import replace
+
+import torch
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -116,6 +118,20 @@ class GoatMemoryManager:
         ]
         self._low_activation_ticks: dict[str, int] = {}
         self._tick_count: int = 0
+        # CPU cache of per-token activation_bonus(i); invalidated when nodes change.
+        self._bonus_cpu: torch.Tensor | None = None
+
+    def invalidate_bonus_cache(self) -> None:
+        self._bonus_cpu = None
+
+    def bonus_tensor(self, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
+        """(V,) on device; matches activation_bonus(i) for each vocab id (gather-friendly)."""
+        if self._bonus_cpu is None:
+            self._bonus_cpu = torch.tensor(
+                [self.activation_bonus(i) for i in range(len(self.nodes))],
+                dtype=torch.float32,
+            )
+        return self._bonus_cpu.to(device=device, dtype=dtype)
 
     # ------------------------------------------------------------------
     def tick(self, contexts: list[list[int]]) -> None:
@@ -150,6 +166,7 @@ class GoatMemoryManager:
             ticks_to_deep=self.ticks_to_deep,
         )
         self._tick_count += 1
+        self.invalidate_bonus_cache()
 
     def activation_bonus(self, token_id: int) -> float:
         """
