@@ -1,0 +1,4 @@
+epoch,loss_mode,mean_loss,train_ce,val_ce,train_traj_contrast,val_traj_contrast,mean_final_step_tension,max_batch_loss,lr,global_step,tscore_evolves,tscore_last_tension
+1,trajectory,4.713880,7.059556,6.983707,2.236284,0.043765,,5.994160,0.00100000,13761,0,0.000000
+2,trajectory,4.598101,6.772948,6.951918,2.228926,0.040020,,4.852115,0.00100000,27522,0,0.000000
+3,trajectory,4.581225,6.732754,6.936044,2.230938,0.039281,,4.887531,0.00100000,41283,0,0.000000
