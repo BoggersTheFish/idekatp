@@ -509,6 +509,8 @@ python inference_server.py --self-test
 - `compute_traj_contrast(model, dataset)` — mean trajectory contrastive loss
 - `run_wave_cycle(model, substrate, dataset, max_ticks=11)` — feeds language batches into TSCore, runs `run_until_stable(max_ticks)`, returns before/after tension delta and evolve count
 
+Evaluation calls that run trajectory forwards now use a non-mutating path for repulsion memory bookkeeping, so diagnostics do not alter subsequent training behavior.
+
 **Phase 0 eval results (untrained model, 51-line corpus):**
 
 | Metric | Value |
@@ -557,6 +559,8 @@ Configuration: **`Phase2Config`** in `phase2_config.py` (CLI: **`--phase2-*`**).
 Batch CSV (with `--phase05-batch-metrics-csv`) gains Phase 2 fields when breaks occur: **`phase2_break_direction_norm_mean`**, **`phase2_break_applied_alpha_mean`**, **`phase2_break_delta_tension_mean`**, **`phase2_break_delta_alignment_mean`**, **`phase2_head_weight_entropy`**, **`phase2_interaction_reg_loss`**.
 
 **Checkpoints:** new parameters (for example **`mixing_gate_raw`**, **`phase1_window_C`**) are not in older checkpoints; load with **`strict=False`** or retrain.
+
+**Resume reliability:** optimizer state is restored after model device placement and optimizer tensors are migrated to the active device, preventing Adam CPU/CUDA state mismatch on resumed training.
 
 ---
 
@@ -666,6 +670,7 @@ Training:
   --loss-mode {trajectory,ce}
   --token-aux-ce FLOAT       Aux CE on readout_window in trajectory mode (default: 0.2)
   --readout-aux-alpha FLOAT  Aux CE on single-state readout (default: 0.15; 0 = off)
+  --grad-clip FLOAT          Optional global grad-norm clip (default: off)
   --lr, --lr-decay-every, --lr-gamma
   --epoch-copies INT         Repeat training lines per epoch
   --max-epochs N, --epochs N Number of training epochs (default: 25)

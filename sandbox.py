@@ -870,7 +870,7 @@ class TorchAttractorLanguageModel(nn.Module):
             bonuses_2d = bv[safe] * valid.to(dtype=S.dtype)
             signal = bonuses_2d.unsqueeze(-1).expand(B, W, D)
         else:
-            signal = torch.zeros(B, W, D, device=S.device, dtype=S.dtype)
+            signal = None
 
         # Local dynamics (per-position multi-head diffusion), then optional global C coupling.
         S = self.dynamics.step(S, signal)
@@ -1063,7 +1063,7 @@ class TorchAttractorLanguageModel(nn.Module):
             )
             need_jitter = is_low & (consecutive_low_t_steps_t >= 4)
             # Low-tension break: directional escape along (S − S_prev_outer) or legacy Gaussian jitter.
-            if bool(need_jitter.item()):
+            if bool(torch.any(need_jitter)):
                 break_count_window += 1
                 S_low_bef = S
                 delta_lo = S - S_prev_outer
@@ -1079,9 +1079,8 @@ class TorchAttractorLanguageModel(nn.Module):
                 T_post_l = self.compute_tension_window(S_try_l).mean().detach()
                 cos_post_l = self._window_row_cos_mean(S_try_l).detach()
                 if self.phase2_config.enable_break_rejection:
-                    if float(T_post_l) > float(T_pre_l) and float(cos_post_l) < float(
-                        cos_pre_l
-                    ):
+                    reject_l = (T_post_l > T_pre_l) & (cos_post_l < cos_pre_l)
+                    if bool(torch.any(reject_l)):
                         S_try_l = S_low_bef
                 S = S_try_l
                 if trace:
@@ -1102,14 +1101,14 @@ class TorchAttractorLanguageModel(nn.Module):
             if (
                 self._goat_mgr is not None
                 and context_ids is not None
-                and bool(need_jitter.item())
+                and bool(torch.any(need_jitter))
             ):
                 self._goat_transition_context_ids = context_ids
                 self.goat_memory.apply_transition(
                     S[:, -1, :].mean(dim=0), "DORMANT", "ACTIVE"
                 )
             high = (T > thigh).any()
-            if bool(high.item()):
+            if bool(torch.any(high)):
                 break_count_window += 1
                 S_h_bef = S
                 delta_h = S - S_prev_outer
@@ -1125,9 +1124,8 @@ class TorchAttractorLanguageModel(nn.Module):
                 T_post_hm = self.compute_tension_window(S_try_h).mean().detach()
                 cos_post_h = self._window_row_cos_mean(S_try_h).detach()
                 if self.phase2_config.enable_break_rejection:
-                    if float(T_post_hm) > float(T_pre_hm) and float(cos_post_h) < float(
-                        cos_pre_h
-                    ):
+                    reject_h = (T_post_hm > T_pre_hm) & (cos_post_h < cos_pre_h)
+                    if bool(torch.any(reject_h)):
                         S_try_h = S_h_bef
                 S_hi = S_try_h
                 if trace:
@@ -1145,7 +1143,7 @@ class TorchAttractorLanguageModel(nn.Module):
                     self._phase2_last_break_pre = S_h_bef.detach().clone()
                     self._phase2_last_break_post = S_hi.detach().clone()
                 S = S_hi
-            if trace and bool(high.item()):
+            if trace and bool(torch.any(high)):
                 t_af = self.compute_tension_window(S).mean().detach()
                 _t_post_h = _t_post_h + t_af
                 _n_h_ev += 1
@@ -1158,7 +1156,7 @@ class TorchAttractorLanguageModel(nn.Module):
                 tension_ok = torch.zeros((), device=S.device, dtype=torch.bool)
                 if prev_t_mean is not None:
                     tension_ok = (t_mean.detach() - prev_t_mean).abs() < conv_eps
-                if bool(delta_ok.item()) or bool(tension_ok.item()):
+                if bool(torch.any(delta_ok | tension_ok)):
                     convergence_triggered = True
                     break
             prev_t_mean = t_mean.detach()
@@ -1331,6 +1329,7 @@ class TorchAttractorLanguageModel(nn.Module):
         contexts: list[list[int]],
         targets: list[int],
         teacher_steps: int | None = None,
+        update_repulsion_memory: bool = True,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Batched trajectory contrastive loss + readout logits from pred state.
@@ -1392,10 +1391,11 @@ class TorchAttractorLanguageModel(nn.Module):
         reg_c = self.phase2_interaction_reg_loss()
         if self.phase2_config.interaction_reg_weight > 0.0:
             loss_traj = loss_traj + self.phase2_config.interaction_reg_weight * reg_c
-        with torch.no_grad():
-            self._repulsion_prev_states.append(fast_state.detach().clone())
-            if len(self._repulsion_prev_states) > 8:
-                self._repulsion_prev_states.pop(0)
+        if update_repulsion_memory:
+            with torch.no_grad():
+                self._repulsion_prev_states.append(fast_state.detach().clone())
+                if len(self._repulsion_prev_states) > 8:
+                    self._repulsion_prev_states.pop(0)
         logits = self.readout_window(S_pred.reshape(B, -1)) / self.effective_temperature()
         logits = torch.nan_to_num(logits, nan=0.0, posinf=0.0, neginf=-1e4)
         # Store final-position single state for auxiliary readout training (Phase 5).
@@ -1712,7 +1712,11 @@ class SimpleAttractorDynamics(nn.Module):
             self._last_head_weight_entropy = (
                 -(w * (w.clamp(min=1e-9)).log()).sum(dim=-1).mean()
             )
-            mixed = (w.unsqueeze(-1) * drifts).sum(dim=1)
+            mixed = w.unsqueeze(-1) * drifts
+            if self.head_dim_mode == "split":
+                mixed = mixed.reshape(N, H * self.dh)
+            else:
+                mixed = mixed.sum(dim=1)
         else:
             self._last_head_weight_entropy = None
             flat = drifts.reshape(N, -1)
@@ -1772,7 +1776,7 @@ class SimpleAttractorDynamics(nn.Module):
         s = s / (nrm + eps)
         return torch.clamp(s, -10.0, 10.0)
 
-    def step(self, S: torch.Tensor, signal: torch.Tensor) -> torch.Tensor:
+    def step(self, S: torch.Tensor, signal: torch.Tensor | None) -> torch.Tensor:
         """Unified batched step (B, W, D) or (N, D)."""
         ns = (
             self.noise_scale.to(device=S.device, dtype=S.dtype)
@@ -1782,10 +1786,15 @@ class SimpleAttractorDynamics(nn.Module):
         if S.dim() == 3:
             B, W, D = S.shape
             flat = S.reshape(B * W, D)
-            sig_flat = signal.reshape(B * W, D)
+            sig_flat = (
+                signal.reshape(B * W, D)
+                if signal is not None
+                else torch.zeros_like(flat)
+            )
             out_flat = self._step_rows(flat, sig_flat, ns)
             return out_flat.reshape(B, W, D)
-        return self._step_rows(S, signal, ns)
+        sig = signal if signal is not None else torch.zeros_like(S)
+        return self._step_rows(S, sig, ns)
 
 
 def make_diffusion_matrix(
@@ -2616,6 +2625,12 @@ def main() -> None:
     parser.add_argument("--token-aux-ce", type=float, default=TOKEN_AUX_CE_WEIGHT_DEFAULT,
         help="trajectory mode: aux readout_window CE weight.")
     parser.add_argument("--lr", type=float, default=0.001)
+    parser.add_argument(
+        "--grad-clip",
+        type=float,
+        default=None,
+        help="Optional gradient clipping max norm (disabled when not set).",
+    )
     parser.add_argument("--lr-decay-every", type=int, default=0)
     parser.add_argument("--lr-gamma", type=float, default=0.5)
     parser.add_argument("--epoch-metrics-csv", type=Path, default=None)
@@ -2946,16 +2961,13 @@ def main() -> None:
     )
     model.tokenizer = tok
 
-    # ---- Phase 4: build optimizer (before checkpoint load) ----
-    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=1e-5)
     start_epoch = 0
     global_step = 0
+    ckpt = None
 
     if args.resume_checkpoint is not None and args.resume_checkpoint.is_file():
         ckpt = torch.load(args.resume_checkpoint, map_location="cpu")
         model.load_state_dict(ckpt["model_state"])
-        if "optimizer_state" in ckpt:
-            optimizer.load_state_dict(ckpt["optimizer_state"])
         global_step = ckpt.get("step", 0)
         start_epoch = ckpt.get("epoch", 0)
         print(
@@ -2970,6 +2982,14 @@ def main() -> None:
 
     # ---- Phase 3: move to device ----
     model = model.to(device)
+    # ---- Phase 4: build optimizer (after device placement) ----
+    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=1e-5)
+    if ckpt is not None and "optimizer_state" in ckpt:
+        optimizer.load_state_dict(ckpt["optimizer_state"])
+        for state in optimizer.state.values():
+            for k, v in state.items():
+                if torch.is_tensor(v):
+                    state[k] = v.to(device)
     _compile_status = "skipped"
     if args.debug:
         _np = sum(p.numel() for p in model.parameters())
@@ -3438,6 +3458,8 @@ def main() -> None:
 
                 optimizer.zero_grad(set_to_none=True)
                 loss.backward()
+                if args.grad_clip is not None:
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
                 if args.debug and batch_idx == 0:
                     _gn = float(
                         torch.nn.utils.clip_grad_norm_(model.parameters(), float("inf"))
@@ -3534,6 +3556,8 @@ def main() -> None:
                     step_loss = loss_ce - ENTROPY_WEIGHT * entropy
                     optimizer.zero_grad(set_to_none=True)
                     step_loss.backward()
+                    if args.grad_clip is not None:
+                        torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
                     optimizer.step()
                     loss_sum += float(step_loss.detach())
                     global_step += 1
@@ -3587,7 +3611,9 @@ def main() -> None:
                 with torch.no_grad():
                     _tc_contexts = [c for c, _ in _tc_data]
                     _tc_targets = [t for _, t in _tc_data]
-                    _tl, _ = model.trajectory_contrastive_loss_and_logits(_tc_contexts, _tc_targets)
+                    _tl, _ = model.trajectory_contrastive_loss_and_logits(
+                        _tc_contexts, _tc_targets, update_repulsion_memory=False
+                    )
                     train_traj_contrast = float(_tl.detach())
 
             vtc_s = f"{val_traj_contrast:.6f}" if val_traj_contrast is not None else "n/a"

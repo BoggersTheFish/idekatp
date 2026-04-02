@@ -82,7 +82,9 @@ def compute_mean_tension(
             chunk = dataset[i : i + batch_size]
             contexts = [c for c, _ in chunk]
             targets = [t for _, t in chunk]
-            _, _ = model.trajectory_contrastive_loss_and_logits(contexts, targets)
+            _, _ = model.trajectory_contrastive_loss_and_logits(
+                contexts, targets, update_repulsion_memory=False
+            )
             curve = getattr(model, "_last_window_tension_curve", [])
             if curve:
                 tensions.append(curve[-1])
@@ -125,7 +127,9 @@ def compute_traj_contrast(
                 continue
             contexts = [c for c, _ in chunk]
             targets = [t for _, t in chunk]
-            loss, _ = model.trajectory_contrastive_loss_and_logits(contexts, targets)
+            loss, _ = model.trajectory_contrastive_loss_and_logits(
+                contexts, targets, update_repulsion_memory=False
+            )
             if torch.isfinite(loss):
                 total += float(loss.item())
                 n += 1
@@ -161,7 +165,9 @@ def run_wave_cycle(
                 continue
             contexts = [c for c, _ in chunk]
             targets = [t for _, t in chunk]
-            model.trajectory_contrastive_loss_and_logits(contexts, targets)
+            model.trajectory_contrastive_loss_and_logits(
+                contexts, targets, update_repulsion_memory=False
+            )
             curve = getattr(model, "_last_window_tension_curve", [])
             if curve:
                 lang_tensions.append(curve[-1])

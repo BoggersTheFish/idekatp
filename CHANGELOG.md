@@ -22,6 +22,15 @@ The project is documented as **BoggersTheLanguageModel**; canonical source is [g
 - **`goat_memory_transitions.py`**: **`GoatMemoryManager.tick()`** now uses **`torch.bincount`** to count token usage across the batch before applying GOAT activation boosts.
 - **`phase05_config.py`** / **README**: clarified that `log_metrics=False` keeps only control-flow tension work and skips heavy tracing.
 
+## Reliability — optimizer resume, head drift shape, eval isolation (Apr 2026)
+
+- **`sandbox.py`**: checkpoint resume now restores optimizer state **after** `model.to(device)` and migrates optimizer tensors to the active device, fixing Adam CPU/CUDA state mismatch failures on resumed training.
+- **`sandbox.py`**: `SimpleAttractorDynamics.linear_drift` head-tension weighting path now preserves full `(N, D)` shape in split-head mode before residual mixing.
+- **`sandbox.py`**: `trajectory_contrastive_loss_and_logits(..., update_repulsion_memory=True)` adds explicit control over repulsion-memory mutation; evaluation/logging paths pass `False` to avoid altering training dynamics.
+- **`sandbox.py`**: `run_window_dynamics` removes `.item()`-based control-flow checks from the attractor loop branch points, reducing stepwise GPU synchronization pressure.
+- **`sandbox.py`**: new CLI flag `--grad-clip` adds optional global gradient clipping.
+- **`vendor/ts-llm/attractor_llm/torch_core.py`**: `MultiHeadDynamics.drift` head loop vectorized via batched matmul/einsum.
+
 ## Engineering — window dynamics performance (Mar 2026)
 
 - **`sandbox.py`**: **`run_window_dynamics`** caches static per-window tensors (positional coupling weights, Phase‑1 **`C * mask`**, GOAT bonus vector) outside the outer step loop; optional **early convergence** via **`convergence_epsilon`** / **`min_attractor_steps`** (CLI **`--convergence-epsilon`**, **`--min-attractor-steps`**; default epsilon **`0`** preserves full **`max_window_steps`**). **`--dynamics`** default is **`vectorized`**; **`VectorizedWindowDynamics`** is constructed with **`state_dim`**, **`window_size`**, **`max_steps`**. On CUDA: **`torch.set_float32_matmul_precision("high")`**; **`torch.compile`** only **`dyn._step`** (vectorized) or **`dyn._step_rows`** (simple). Phase‑2 directional escape uses **`F.normalize`** on break directions. Last-run diagnostics: **`_last_attractor_steps_used`**, **`_last_final_window_tension_diag`**, **`_last_window_break_count`**, **`_last_convergence_triggered`**.
