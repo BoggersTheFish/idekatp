@@ -32,6 +32,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 from typing import NoReturn, Optional
+import json
+import time
 
 import torch
 import torch.nn as nn
@@ -44,6 +46,28 @@ if str(_TS_LLM) not in sys.path:
     sys.path.insert(0, str(_TS_LLM))
 
 from attractor_llm.torch_core import MultiHeadDynamics, _clamp_norm  # type: ignore[import]
+
+# #region agent log
+_AGENT_DEBUG_LOG_PATH = Path("/home/boggersthefish/BoggersTheLLM/.cursor/debug-b56157.log")
+_AGENT_DEBUG_KEYS: set[str] = set()
+
+
+def _agent_debug_log(*, run_id: str, hypothesis_id: str, location: str, message: str, data: dict) -> None:
+    try:
+        payload = {
+            "sessionId": "b56157",
+            "runId": run_id,
+            "hypothesisId": hypothesis_id,
+            "location": location,
+            "message": message,
+            "data": data,
+            "timestamp": int(time.time() * 1000),
+        }
+        with _AGENT_DEBUG_LOG_PATH.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(payload, separators=(",", ":")) + "\n")
+    except Exception:
+        pass
+# #endregion
 
 
 # --------------------------------------------------------------------------
@@ -126,6 +150,23 @@ class VectorizedWindowDynamics(nn.Module):
             sig = torch.zeros_like(flat)
         else:
             sig = signal.reshape(B * W, D)
+        # #region agent log
+        if "vec_step_entry" not in _AGENT_DEBUG_KEYS:
+            _AGENT_DEBUG_KEYS.add("vec_step_entry")
+            _agent_debug_log(
+                run_id="pre-fix",
+                hypothesis_id="H2",
+                location="dynamics_vectorized.py:118",
+                message="VectorizedWindowDynamics._step entry",
+                data={
+                    "file": __file__,
+                    "flat_shape": list(flat.shape),
+                    "sig_shape": list(sig.shape),
+                    "use_lorentz": bool(self.use_lorentz),
+                    "mhd_module": type(self.mhd).__module__,
+                },
+            )
+        # #endregion
         if self.use_lorentz:
             v_raw = self.mhd.drift(flat, sig)
             v = self.project_tangent(flat, v_raw)
