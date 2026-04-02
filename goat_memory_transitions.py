@@ -141,20 +141,30 @@ class GoatMemoryManager:
         1. Boost activation for tokens seen in this batch (usage-based).
         2. Apply exponential decay + ACTIVE/DORMANT/DEEP transitions via GOAT-TS.
         """
-        # Flatten all token ids in the batch and count usages
-        usage: dict[int, int] = {}
-        for ctx in contexts:
-            for tid in ctx:
-                usage[tid] = usage.get(tid, 0) + 1
+        vocab_size = len(self.nodes)
+        if contexts:
+            ctx_tensor = torch.as_tensor(contexts, dtype=torch.long)
+            flat = ctx_tensor.reshape(-1)
+            valid = flat[(flat >= 0) & (flat < vocab_size)]
+            counts = (
+                torch.bincount(valid, minlength=vocab_size)
+                if valid.numel() > 0
+                else torch.zeros(vocab_size, dtype=torch.long)
+            )
+        else:
+            counts = torch.zeros(vocab_size, dtype=torch.long)
 
         # Boost activation proportional to usage frequency (capped at 1.0)
-        max_usage = max(usage.values()) if usage else 1
-        for tid, count in usage.items():
-            if 0 <= tid < len(self.nodes):
-                old = self.nodes[tid].activation
-                boost = self.active_threshold * (count / max_usage)
-                new_act = min(1.0, old + boost)
-                self.nodes[tid] = replace(self.nodes[tid], activation=new_act)
+        max_usage = int(counts.max().item()) if counts.numel() > 0 else 1
+        if max_usage <= 0:
+            max_usage = 1
+        active_ids = torch.nonzero(counts > 0, as_tuple=False).reshape(-1).tolist()
+        for tid in active_ids:
+            count = int(counts[tid].item())
+            old = self.nodes[tid].activation
+            boost = self.active_threshold * (count / max_usage)
+            new_act = min(1.0, old + boost)
+            self.nodes[tid] = replace(self.nodes[tid], activation=new_act)
 
         # GOAT-TS memory tick: decay + state transitions
         self.nodes, self._low_activation_ticks = memory_tick(

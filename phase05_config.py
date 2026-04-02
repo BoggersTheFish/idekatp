@@ -14,7 +14,7 @@ from typing import Tuple
 @dataclass
 class Phase05Config:
     log_metrics: bool = False
-    """If True, collect per-batch diagnostics (cheap .item() only at batch boundary when possible)."""
+    """If True, collect per-batch diagnostics and tracing; False keeps only control-flow tension computations."""
 
     batch_metrics_csv: str | None = None
     """Path to append per-batch CSV rows (requires log_metrics)."""

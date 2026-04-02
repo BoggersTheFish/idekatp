@@ -4,7 +4,7 @@ Phase 0 locks a **reproducible reference** for **BoggersTheLanguageModel** (`san
 
 For runs on a **public or large text corpus** (Hugging Face TinyStories / FineWeb-Edu or your own files), follow README → [First real training run](https://github.com/BoggersTheFish/BoggersTheLLM#first-real-training-run-public-corpus--checkpoint--eval-json). Use **`--eval-results-json`** with `sandbox.py` to write val CE / val PPL and the checkpoint path alongside training.
 
-**Phase 0.5 / 1 / 2:** If you enable **`--phase05-batch-metrics-csv`**, each batch row includes extra diagnostics (window tension traces, breaks, Phase 1 interaction RMS / head tension / diversity loss, Phase 2 break direction norm, α, ΔT, Δalignment, head-weight entropy, interaction reg). Additional columns may include **attractor step count**, **final window tension**, **window break count**, and **convergence triggered** (see `PHASE05_BATCH_CSV_HEADER` in `sandbox.py`). Re-baseline after changing **`--phase2-*`**, **`--phase1-*`**, **`--dynamics`**, **`--convergence-epsilon`**, or **`--num-dynamics-steps`** because dynamics and loss shape change.
+**Phase 0.5 / 1 / 2:** If you enable **`--phase05-batch-metrics-csv`**, each batch row includes extra diagnostics (window tension traces, breaks, Phase 1 interaction RMS / head tension / diversity loss, Phase 2 break direction norm, α, ΔT, Δalignment, head-weight entropy, interaction reg). Additional columns may include **attractor step count**, **final window tension**, **window break count**, and **convergence triggered** (see `PHASE05_BATCH_CSV_HEADER` in `sandbox.py`). When **`--phase05-log-metrics`** is off, tracing arrays are skipped and only control-flow tension values are computed. Re-baseline after changing **`--phase2-*`**, **`--phase1-*`**, **`--dynamics`**, **`--convergence-epsilon`**, or **`--num-dynamics-steps`** / **`--max-window-steps`** because dynamics and loss shape change.
 
 ## How to record a baseline run
 
@@ -38,7 +38,7 @@ For runs on a **public or large text corpus** (Hugging Face TinyStories / FineWe
 | Metric | Meaning |
 |--------|--------|
 | **train_ce** (CSV / log) | Mean **per-batch** CE on `readout_window` logits vs targets during training (trajectory mode). **Not** the same as `val_ce`. |
-| **val_ce** (CSV / log) | Held-out **`mean_cross_entropy_eval`**. **Ignore absolute value** when the val set is tiny; use trend after scale-up. **Val PPL** ≈ `exp(val_ce)`. |
+| **val_ce** (CSV / log) | Held-out **`mean_cross_entropy_eval`**. It now runs in batches through `embed_windows_batch -> run_window_dynamics -> readout_window` with the same eval-time shaping as training-side validation. **Ignore absolute value** when the val set is tiny; use trend after scale-up. **Val PPL** ≈ `exp(val_ce)`. |
 | **mean_loss** (last epoch) | With `--loss-mode trajectory` (default): full step objective (trajectory contrastive + token aux CE + readout aux weights). |
 | **train_traj_contrast** | Trajectory contrastive loss on the **last training batch** of the epoch (diagnostic). |
 | **val_traj_contrast** | Mean trajectory contrastive loss over the **full validation** set (when val exists). |
@@ -46,7 +46,7 @@ For runs on a **public or large text corpus** (Hugging Face TinyStories / FineWe
 | **tscore_evolves** / **tscore_last_tension** | With `--use-substrate`: per-epoch evolve delta and last TSCore tension. |
 | **Per-batch CSV** (`--phase05-batch-metrics-csv`) | Not in epoch CSV: separate file; see `PHASE05_BATCH_CSV_HEADER` in `sandbox.py` for column names (`phase2_*`, `phase1_*`, tension curves, attractor diagnostics, etc.). |
 
-Architecture changes will change absolute numbers—re-record baseline after major `sandbox.py` updates. Window dynamics and **`AttractorStateCache`** both go through **`run_window_dynamics`**; **`mean_final_T`** in CSV reflects **`compute_tension_window`** at the last outer step each window.
+Architecture changes will change absolute numbers—re-record baseline after major `sandbox.py` updates. Window dynamics and **`AttractorStateCache`** both go through **`run_window_dynamics`**; the cache now uses the same **`Embedding -> LayerNorm -> row L2`** pipeline as training before entering the attractor. **`mean_final_T`** in CSV reflects **`compute_tension_window`** at the last outer step each window.
 
 ## v1 scale-up success check (agreed criteria)
 

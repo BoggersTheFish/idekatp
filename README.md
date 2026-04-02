@@ -331,8 +331,8 @@ python3 sandbox.py --corpus data/generated.txt
 **Batch size, window, and steps**
 
 - **Trajectory mode** requires **`--trajectory-batch-size` ≥ 2** (negatives are drawn inside the batch). Larger batches stabilise contrastive training but cost more memory.
-- **Window size** (`--window-size`): wider context increases compute per step roughly linearly in `W` (embedding is `W×D`, dynamics run up to **`--num-dynamics-steps`** outer steps). Start with the default or `8`; increase when data and VRAM allow.
-- **`--num-dynamics-steps`**: hard cap on outer steps per window. Optional **`--convergence-epsilon`** (with **`--min-attractor-steps`**, default 2) can stop early when state change or tension is stable; default epsilon is **`0`** (full **`--num-dynamics-steps`** each window). More steps mean deeper relaxation; diminishing returns once tension curves flatten—watch **`mean_final_step_tension`** in epoch CSV.
+- **Window size** (`--window-size`): wider context increases compute per step roughly linearly in `W` (embedding is `W×D`, dynamics run up to **`--num-dynamics-steps`** / **`--max-window-steps`** outer steps). Start with the default or `8`; increase when data and VRAM allow.
+- **`--num-dynamics-steps`** / **`--max-window-steps`**: hard cap on outer steps per window. Optional **`--convergence-epsilon`** (with **`--min-attractor-steps`**, default 2) can stop early when state change or tension is stable; default epsilon is **`0`** (full configured outer steps each window). More steps mean deeper relaxation; diminishing returns once tension curves flatten—watch **`mean_final_step_tension`** in epoch CSV.
 
 **Throughput and hardware**
 
@@ -349,7 +349,7 @@ python3 sandbox.py --corpus data/generated.txt
 **Logging for analysis**
 
 - **`--epoch-metrics-csv`**: one row per epoch (loss, CE, tension, TSCore fields).
-- **`--phase05-batch-metrics-csv`** (with **`--phase05-log-metrics`** implied): per-batch diagnostics; plot with **`scripts/plot_phase05_metrics.py`**.
+- **`--phase05-batch-metrics-csv`** (with **`--phase05-log-metrics`** implied): per-batch diagnostics; plot with **`scripts/plot_phase05_metrics.py`**. When metrics logging is off, the runtime skips heavy tracing arrays and keeps only the tension values needed for control flow.
 
 ### Debug mode
 
@@ -417,7 +417,7 @@ Both **`SimpleAttractorDynamics`** and **`VectorizedWindowDynamics`** implement 
 `state_cache.py` provides **rolling-window** inference aligned with training:
 
 - `AttractorStateCache` holds **`fast_state (D,)`** + **`slow_memory (D,)`** + rolling **`phrase_table`**
-- **`step(token_id)`** — builds the last-**W** token ids, **`F.normalize`**-embeds each row, runs **`model.run_window_dynamics(S, context_ids=[ids], …)`** with **`S`** **`(1, W, D)`**, then updates fast/slow from the final row and phrase table
+- **`step(token_id)`** — builds the last-**W** token ids, applies the same training embedding pipeline (**`Embedding → LayerNorm → row L2`**), runs **`model.run_window_dynamics(S, context_ids=[ids], …)`** with **`S`** **`(1, W, D)`**, then updates fast/slow from the final row and phrase table
 - **`logits()`** — **`readout(combined)`** on the symplectic blend of fast/slow (same head as **`next_token_logits`**)
 - **`warmup(prompt_ids)`** — seed cache from prompt before generation
 - **`generate_with_cache(model, cache, prompt, ...)`** — drop-in for **`model.generate()`**
@@ -525,7 +525,7 @@ TSCore converges cleanly. High PPL is expected for an untrained model — the ha
 
 Configuration: **`Phase05Config`** in `phase05_config.py`, passed to **`TorchAttractorLanguageModel(..., phase05=...)`** (CLI: `--phase05-*`).
 
-- **`--phase05-log-metrics`**: collect window-trace and token-evolve diagnostics used for batch CSV and logged scalars.
+- **`--phase05-log-metrics`**: collect window-trace and token-evolve diagnostics used for batch CSV and logged scalars. When disabled, the outer loop avoids accumulating tension curves, step diagnostics, and break-tracing arrays.
 - **`--phase05-batch-metrics-csv PATH`**: append one row per training batch (implies log metrics). Column list is `PHASE05_BATCH_CSV_HEADER` in `sandbox.py` (tension components, stagnation, trajectory margin, break counts, Phase 1–2 extensions).
 - **`--phase05-enforce-negdef-diffusion`**: strictly negative-definite diffusion in the simple dynamics path.
 - **`--phase05-adaptive-window-dt`**: EMA-scaled positional timestep from window tension.
@@ -658,8 +658,9 @@ Data & tokenizer:
 
 Training:
   --window-size INT          Context window W (default: 6)
-  --num-dynamics-steps INT   Max outer attractor steps per window (default: 16)
-  --convergence-epsilon FLOAT  Early exit when ‖ΔS‖ or |ΔT_mean| below this after min steps (0 = use all num-dynamics-steps; try 1e-3 on GPU)
+  --num-dynamics-steps INT, --max-window-steps INT
+                            Max outer attractor steps per window (default: 16)
+  --convergence-epsilon FLOAT  Early exit when ‖ΔS‖ or |ΔT_mean| below this after min steps (0 = use all configured outer steps; try 1e-3 on GPU)
   --min-attractor-steps INT  Minimum outer steps before early exit may trigger (default: 2, ≥2)
   --trajectory-batch-size INT  Batch size for trajectory mode (default: 64, need ≥2)
   --loss-mode {trajectory,ce}

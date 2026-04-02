@@ -13,6 +13,15 @@ The project is documented as **BoggersTheLanguageModel**; canonical source is [g
 - **`tests/test_embed_windows_batch.py`**: prints **`max_abs_diff`** between batched vs stacked embeddings; run with **`python3 tests/test_embed_windows_batch.py`**.
 - **`.gitignore`**: **`runs/`** for local experiment output.
 
+## Performance — batched validation, cache parity, lighter tracing (Apr 2026)
+
+- **`state_cache.py`**: **`AttractorStateCache.step()`** now uses the same training-time embedding geometry as `embed_window` / `embed_windows_batch`: **`Embedding -> LayerNorm -> row L2`** before `run_window_dynamics`.
+- **`sandbox.py`**: **`mean_cross_entropy_eval()`** now evaluates validation in batches with **`embed_windows_batch`**, **`run_window_dynamics`**, and **`readout_window`** instead of one-window-at-a-time `forward_training_window`. Validation shaping is preserved (bigram bias, repeat penalties, label smoothing) but GPU utilization is much better.
+- **`sandbox.py`**: **`trajectory_contrastive_loss_and_logits(..., teacher_steps=None)`** optionally runs the detached teacher path with fewer attractor steps for cheaper experiments, restoring `max_window_steps` via `try/finally`.
+- **`sandbox.py`**: **`run_window_dynamics`** only materializes tension curves when requested and defers `.item()` conversion for collected step diagnostics until after the outer loop, reducing sync overhead from Phase 0.5 tracing.
+- **`goat_memory_transitions.py`**: **`GoatMemoryManager.tick()`** now uses **`torch.bincount`** to count token usage across the batch before applying GOAT activation boosts.
+- **`phase05_config.py`** / **README**: clarified that `log_metrics=False` keeps only control-flow tension work and skips heavy tracing.
+
 ## Engineering — window dynamics performance (Mar 2026)
 
 - **`sandbox.py`**: **`run_window_dynamics`** caches static per-window tensors (positional coupling weights, Phase‑1 **`C * mask`**, GOAT bonus vector) outside the outer step loop; optional **early convergence** via **`convergence_epsilon`** / **`min_attractor_steps`** (CLI **`--convergence-epsilon`**, **`--min-attractor-steps`**; default epsilon **`0`** preserves full **`max_window_steps`**). **`--dynamics`** default is **`vectorized`**; **`VectorizedWindowDynamics`** is constructed with **`state_dim`**, **`window_size`**, **`max_steps`**. On CUDA: **`torch.set_float32_matmul_precision("high")`**; **`torch.compile`** only **`dyn._step`** (vectorized) or **`dyn._step_rows`** (simple). Phase‑2 directional escape uses **`F.normalize`** on break directions. Last-run diagnostics: **`_last_attractor_steps_used`**, **`_last_final_window_tension_diag`**, **`_last_window_break_count`**, **`_last_convergence_triggered`**.

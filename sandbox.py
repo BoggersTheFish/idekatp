@@ -908,7 +908,8 @@ class TorchAttractorLanguageModel(nn.Module):
         B, W, D = S.shape
         assert W == self.train_window_size
         step_logs: list[dict] | None = [] if collect_metrics else None
-        tension_curve_tensors: list[torch.Tensor] = []
+        step_log_tensors: list[dict[str, torch.Tensor]] | None = [] if collect_metrics else None
+        tension_curve_tensors: list[torch.Tensor] | None = [] if record_tension_log else None
         thigh = self.window_tension_high.to(device=S.device, dtype=S.dtype)
         zero_long = torch.zeros((), device=S.device, dtype=torch.long)
         consecutive_low_t_steps_t = zero_long.clone()
@@ -1006,7 +1007,7 @@ class TorchAttractorLanguageModel(nn.Module):
                 )
                 sm = cfg.adaptive_dt_smooth
                 self._phase05_interaction_dt_scale.copy_((1.0 - sm) * sc + sm * tgt)
-            if record_tension_log:
+            if tension_curve_tensors is not None:
                 tension_curve_tensors.append(t_mean.detach())
             if trace:
                 with torch.no_grad():
@@ -1032,23 +1033,26 @@ class TorchAttractorLanguageModel(nn.Module):
                         _acc_p1_th = _acc_p1_th + thm.mean()
                         _n_p1_th += 1
                 S_prev = S.detach()
-            if collect_metrics and S0 is not None and step_logs is not None:
+            if (
+                collect_metrics
+                and S0 is not None
+                and step_logs is not None
+                and step_log_tensors is not None
+            ):
                 with torch.no_grad():
                     diff = S - S0
-                    nd = float(torch.linalg.vector_norm(diff).item())
-                    tok_var = float(
-                        S.var(dim=(0, 1), unbiased=False).mean().item()
-                    )
-                    cos = float(
-                        F.cosine_similarity(S.flatten(), S0.flatten(), dim=0).item()
-                    )
-                    mn = float(torch.linalg.vector_norm(S, dim=-1).mean().item())
-                    step_logs.append(
+                    step_log_tensors.append(
                         {
-                            "norm_delta": nd,
-                            "token_var_mean": tok_var,
-                            "cosine_to_prev": cos,
-                            "mean_row_norm": mn,
+                            "norm_delta": torch.linalg.vector_norm(diff).detach(),
+                            "token_var_mean": S.var(
+                                dim=(0, 1), unbiased=False
+                            ).mean().detach(),
+                            "cosine_to_prev": F.cosine_similarity(
+                                S.flatten(), S0.flatten(), dim=0
+                            ).detach(),
+                            "mean_row_norm": torch.linalg.vector_norm(
+                                S, dim=-1
+                            ).mean().detach(),
                         }
                     )
             is_low = t_mean < 0.08
@@ -1222,10 +1226,13 @@ class TorchAttractorLanguageModel(nn.Module):
             }
         elif trace:
             self._phase05_last_window_trace = {}
-        if record_tension_log:
-            self._last_window_tension_curve = [
-                float(x) for x in tension_curve_tensors
-            ]
+        if step_logs is not None and step_log_tensors is not None:
+            for entry in step_log_tensors:
+                step_logs.append({k: float(v.item()) for k, v in entry.items()})
+        if tension_curve_tensors is not None:
+            self._last_window_tension_curve = [float(x.item()) for x in tension_curve_tensors]
+        else:
+            self._last_window_tension_curve = []
         if single:
             S = S.squeeze(0)
         return S, step_logs
@@ -1320,7 +1327,10 @@ class TorchAttractorLanguageModel(nn.Module):
         return context_ids[1:] + [target_id]
 
     def trajectory_contrastive_loss_and_logits(
-        self, contexts: list[list[int]], targets: list[int]
+        self,
+        contexts: list[list[int]],
+        targets: list[int],
+        teacher_steps: int | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Batched trajectory contrastive loss + readout logits from pred state.
@@ -1346,9 +1356,15 @@ class TorchAttractorLanguageModel(nn.Module):
             tgt_col = torch.as_tensor(targets, dtype=torch.long, device=device).unsqueeze(1)
             shifted_tensor = torch.cat([context_tensor[:, 1:], tgt_col], dim=1)
             S_tgt = self.embed_windows_batch(shifted_tensor)
-            S_tgt, _ = self.run_window_dynamics(
-                S_tgt, collect_metrics=False, record_tension_log=False
-            )
+            orig_steps = self.max_window_steps
+            try:
+                if teacher_steps is not None:
+                    self.max_window_steps = max(1, int(teacher_steps))
+                S_tgt, _ = self.run_window_dynamics(
+                    S_tgt, collect_metrics=False, record_tension_log=False
+                )
+            finally:
+                self.max_window_steps = orig_steps
         loss_core = self.trajectory_contrastive_loss(S_pred, S_tgt)
         self._phase05_loss_traj_core = float(loss_core.detach().item())
         T = self.compute_tension_window(S_pred).mean()
@@ -2216,27 +2232,47 @@ def build_dataset_from_token_ids(token_ids: list[int], window_size: int) -> list
 def mean_cross_entropy_eval(
     model: TorchAttractorLanguageModel,
     dataset: list,
+    batch_size: int = TRAJECTORY_BATCH_SIZE_DEFAULT,
 ) -> float:
-    """Validation CE: same logit shaping as training, without noise or entropy-floor branch."""
+    """Validation CE: batched window eval with the same logit shaping as training, without noise or entropy-floor branch."""
     if not dataset:
         return float("nan")
     was_training = model.training
     model.eval()
     total = 0.0
-    for context, target_id in dataset:
-        logits = model.forward_training_window(context)
-        prev_id = context[-1]
-        logits = logits + BIGRAM_TRAIN_WEIGHT * torch.matmul(
-            model.embedder.weight, model.embedder.weight[prev_id]
+    device = model.embedder.weight.device
+    E = model.embedder.weight
+    for i in range(0, len(dataset), max(1, batch_size)):
+        chunk = dataset[i : i + max(1, batch_size)]
+        contexts = [c for c, _ in chunk]
+        targets = [t for _, t in chunk]
+        context_tensor = torch.as_tensor(contexts, dtype=torch.long, device=device)
+        targets_tensor = torch.as_tensor(targets, dtype=torch.long, device=device)
+        S = model.embed_windows_batch(context_tensor)
+        S, _ = model.run_window_dynamics(
+            S, collect_metrics=False, record_tension_log=False, context_ids=contexts
         )
-        logits[prev_id] -= 2.0
-        for t in context[-3:]:
-            logits[t] -= 1.0
-        target = torch.tensor([target_id], device=logits.device, dtype=torch.long)
+        B = context_tensor.size(0)
+        logits = model.readout_window(S.reshape(B, -1))
+        logits = logits / model.effective_temperature()
+        logits = torch.nan_to_num(logits, nan=0.0, posinf=0.0, neginf=-1e4)
+        prev_ids = context_tensor[:, -1]
+        logits = logits + BIGRAM_TRAIN_WEIGHT * torch.matmul(E[prev_ids], E.T)
+        logits = logits.clone()
+        row_idx = torch.arange(B, device=device)
+        logits[row_idx, prev_ids] -= 2.0
+        last_k = min(3, context_tensor.size(1))
+        if last_k > 0:
+            rep_ids = context_tensor[:, -last_k:]
+            rep_rows = row_idx.unsqueeze(1).expand(B, last_k).reshape(-1)
+            logits[rep_rows, rep_ids.reshape(-1)] -= 1.0
         loss_ce = F.cross_entropy(
-            logits.unsqueeze(0), target, label_smoothing=LABEL_SMOOTHING
+            logits,
+            targets_tensor,
+            label_smoothing=LABEL_SMOOTHING,
+            reduction="sum",
         )
-        total += float(loss_ce)
+        total += float(loss_ce.detach())
     if was_training:
         model.train()
     return total / len(dataset)
@@ -2553,7 +2589,7 @@ def main() -> None:
         help="Write Phase-0 baseline snapshot to this file.")
     parser.add_argument("--window-size", type=int, default=WINDOW_SIZE,
         help="Sliding context length W.")
-    parser.add_argument("--num-dynamics-steps", type=int, default=MAX_WINDOW_STEPS,
+    parser.add_argument("--num-dynamics-steps", "--max-window-steps", type=int, default=MAX_WINDOW_STEPS,
         help="Max outer steps per window (tension-adaptive).")
     parser.add_argument(
         "--convergence-epsilon",

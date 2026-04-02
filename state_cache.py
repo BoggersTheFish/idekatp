@@ -81,6 +81,7 @@ class AttractorStateCache:
         with torch.no_grad():
             ids_t = torch.tensor(ids, device=device, dtype=torch.long)
             emb = model.embedder(ids_t)
+            emb = model.norm(emb)
             S = F.normalize(emb, dim=-1).unsqueeze(0)
             S_out, _ = model.run_window_dynamics(
                 S,
