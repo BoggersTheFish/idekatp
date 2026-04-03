@@ -747,11 +747,13 @@ class TorchAttractorLanguageModel(nn.Module):
                 else:
                     self._last_energy_descent_anchor_mean = float("nan")
                     self._last_energy_descent_anchor_std = float("nan")
+            # Default retain_graph matches create_graph (PyTorch). When create_graph=True
+            # (training), we must NOT pass retain_graph=False here — that frees the energy
+            # subgraph while grad_st still needs it for the outer loss.backward().
             grad_st = torch.autograd.grad(
                 energy,
                 st_leaf,
                 create_graph=create_graph,
-                retain_graph=False,
             )[0]
             if anchor_freeze_wave is not None:
                 Ws = st_leaf.size(1)
@@ -2484,10 +2486,13 @@ class TorchAttractorLanguageModel(nn.Module):
         if not input_ids:
             input_ids = [0]
         wid = self.window_ids_from_sequence(input_ids)
-        with torch.inference_mode():
+        # no_grad (not inference_mode): window energy descent uses autograd.grad
+        # under a nested enable_grad; inference_mode ignores enable_grad and breaks that path.
+        with torch.no_grad():
             S = self.embed_window(wid)
             S, _, _ = self.run_window_dynamics(S, collect_metrics=False)
-        return S
+        # Snapshot so callers (e.g. compare_prompts) never alias internal tensors.
+        return S.detach().clone()
 
     def _print_attractor_diversity(self, top_k: int = 5):
         ctr = self._attractor_counts
@@ -2530,7 +2535,9 @@ class TorchAttractorLanguageModel(nn.Module):
         self.eval()
         self.reset_readout_trajectory()
         generated_ids = list(input_ids)
-        with torch.inference_mode():
+        # no_grad (not inference_mode): see encode_prompt — run_window_dynamics needs
+        # torch.enable_grad inside _window_energy_gradient_step to compute ∇E.
+        with torch.no_grad():
             if temperature is not None:
                 base_gen_temp = float(temperature)
             else:
@@ -2865,7 +2872,7 @@ def make_diffusion_matrix(
 def compare_prompts(model: "TorchAttractorLanguageModel", prompt1: str, prompt2: str):
     """Encode two prompts via window dynamics and compare converged window states (flattened)."""
     model.eval()
-    with torch.inference_mode():
+    with torch.no_grad():
         S1 = model.encode_prompt(prompt1)
         S2 = model.encode_prompt(prompt2)
     v1 = S1.reshape(-1)
@@ -2888,7 +2895,7 @@ def run_quick_window_tests(model: TorchAttractorLanguageModel) -> None:
     long_b = list(reversed(range(W + 5)))
     wid_a = model.window_ids_from_sequence(long_a)
     wid_b = model.window_ids_from_sequence(long_b)
-    with torch.inference_mode():
+    with torch.no_grad():
         Sa = model.embed_window(wid_a)
         Sa, _, _ = model.run_window_dynamics(Sa)
         Sb = model.embed_window(wid_b)
@@ -2901,7 +2908,7 @@ def run_quick_window_tests(model: TorchAttractorLanguageModel) -> None:
         f"  different order (trailing window): L2={dist:.6f}  cosine={cos:.6f}",
         flush=True,
     )
-    with torch.inference_mode():
+    with torch.no_grad():
         _, logs, _ = model.run_window_dynamics(
             model.embed_window(wid_a), collect_metrics=True
         )
@@ -5045,6 +5052,10 @@ def main() -> None:
                         flush=True,
                     )
 
+                # One backward per batch (no loss.backward(retain_graph=True)).
+                # Inner window energy uses autograd.grad(create_graph=True); that subgraph
+                # is kept alive per-step via grad()'s default retain_graph=create_graph
+                # (see _window_energy_gradient_step — do not override with retain_graph=False).
                 optimizer.zero_grad(set_to_none=True)
                 loss.backward()
                 if args.grad_clip is not None:

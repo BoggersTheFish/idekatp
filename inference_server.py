@@ -108,7 +108,9 @@ class AppState:
                 prompt_ids = [0]
             import torch
             self.model.eval()
-            with torch.inference_mode():
+            # no_grad (not inference_mode): forward_training_window → run_window_dynamics
+            # uses nested enable_grad + autograd.grad for the energy step.
+            with torch.no_grad():
                 wid = self.model.window_ids_from_sequence(prompt_ids)
                 _ = self.model.forward_training_window(wid)
             curve = list(getattr(self.model, "_last_window_tension_curve", []))

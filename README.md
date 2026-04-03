@@ -142,7 +142,42 @@ The default `data/corpus.txt` (or empty path) may trigger a **synthetic** text f
 
 **Option A — TinyStories via Hugging Face (recommended first real run)**
 
-Requires `datasets` (included in `requirements.txt`). The first run downloads data into `data/cache/hf/`. Optional: set `HF_TOKEN` for higher Hub rate limits.
+Requires `datasets` (included in `requirements.txt`). The first run downloads data into `data/cache/hf/`. Set **`HF_TOKEN`** (env) for higher Hub rate limits and faster downloads when unauthenticated warnings appear.
+
+**A0 — Full rows, large token count (GPU-oriented).** With default **`--hf-max-rows 50000`** and **`--hf-max-chars 0`**, TinyStories can materialize **tens of millions** of tokens — one epoch may take **many hours on CPU**. Use for serious GPU runs or overnight jobs.
+
+**A1 — CPU-sized slice (recommended first “real” run on laptop).** Cap UTF-8 size so one epoch stays **~20–25 minutes** on a typical CPU at batch 64 (~3.9 h for 10 epochs). The cache file name changes when **`--hf-max-chars`** changes.
+
+```bash
+pip install -r requirements.txt
+mkdir -p checkpoints/meaningful_run
+
+python3 sandbox.py \
+  --dataset-source tinystories \
+  --hf-max-rows 50000 \
+  --hf-max-chars 1500000 \
+  --tokenizer tiktoken \
+  --vocab-cap 8192 \
+  --val-fraction 0.1 \
+  --window-size 8 \
+  --state-dim 128 \
+  --num-waves 4 \
+  --vectorized-num-heads 4 \
+  --batch-size 64 \
+  --max-epochs 10 \
+  --lr 0.001 \
+  --grad-clip 1.0 \
+  --lr-decay-every 5 \
+  --lr-gamma 0.8 \
+  --epoch-metrics-csv metrics_meaningful.csv \
+  --eval-results-json eval_meaningful.json \
+  --checkpoint-dir checkpoints/meaningful_run \
+  --save-every 500
+```
+
+End-state reference (Apr 2026, one machine): **`val_CE` ~4.8**, **`train_CE` ~3.9** after 10 epochs; generations recognizable as story-like but not polished. Full numbers: **`docs/TRAINING_RUN_LOG.md`**.
+
+**A2 — Larger budget (optional GOAT + substrate).** Omit **`--hf-max-chars`** (or raise it) and scale **`--max-epochs`** / GPU batch size as appropriate.
 
 ```bash
 pip install -r requirements.txt
@@ -403,7 +438,7 @@ Use this when verifying a new machine, a resumed run, or tracking down NaNs; for
 Training and inference use **`sandbox._build_tokenizer(mode, vocab_cap)`**, which loads `AttractorTokenizer` from `vendor/ts-llm`:
 
 - **`--tokenizer tiktoken`** — gpt2 BPE up to `--vocab-cap` (default 32768)
-- **`--tokenizer fallback`** — same BPE, vocab capped at 512 for fast iteration
+- **`--tokenizer fallback`** — same BPE, vocab capped at 512 for fast iteration; GPT-2 ids ``≥ 512`` fold as ``id % 512`` (not dropped, not all clamped to 511), so prompts stay more distinguishable under a small cap
 
 The model is constructed with **`vocab_size = tok.n_vocab`**; `model.tokenizer` is set for `encode` / `decode`. `sandbox.FULL_VOCAB` remains an empty legacy shim for old imports.
 

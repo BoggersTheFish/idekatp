@@ -7,6 +7,18 @@ The project is documented as **BoggersTheLanguageModel**; canonical source is [g
 
 ---
 
+## Docs + training run log — TinyStories CPU slice (Apr 2026)
+
+- **README**: “First real training run” split into **A0** (large corpus / GPU), **A1** ( **`--hf-max-chars`** CPU-sized TinyStories + small model + **`--grad-clip`** ), **A2** (GOAT + substrate, long run). Notes **`HF_TOKEN`** for Hub rate limits.
+- **`docs/TRAINING_RUN_LOG.md`**: Logged verified **10-epoch** CPU run (~355k tokens from 1.5M chars, ~22 min/epoch, ~3.9 h total, `val_CE` ~4.8).
+- **`docs/MILESTONE_TRAINING.md`**: CPU-friendly TinyStories command aligned with A1.
+- **`docs/BASELINE.md`**, **`docs/PROJECT_STATUS.md`**, **`docs/README.md`**: Cross-links to the run log and golden CPU recipe.
+
+## Tokenizer: fold BPE ids under small `vocab_cap` (Apr 2026)
+
+- **`vendor/ts-llm/attractor_llm/tokenizer.py`**: In tiktoken mode, ids ``≥ n_vocab`` use **``t % n_vocab``** (in-range ids unchanged). **Dropped** ids had collapsed unrelated strings; **clamp** to ``n_vocab-1`` collapsed almost everything onto one row under cap 512. Modulo spreads high ids across rows while preserving BPE sequence length.
+- **README**: Note fallback folding behaviour.
+
 ## Trajectory-guided training + pipeline API (Apr 2026)
 
 - **`phase05_config.py`**: `trajectory_guidance_nudge_scale`, `trajectory_guidance_mse_weight` — optional nudge toward precomputed **`(B, W, D)`** targets each outer `run_window_dynamics` step, and optional MSE term on final student state vs those targets.

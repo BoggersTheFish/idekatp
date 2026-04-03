@@ -74,7 +74,9 @@ window_ids = model.window_ids_from_sequence(window_source_ids)
 S0 = model.embed_window(window_ids)
 
 print("[smoke] running window dynamics ...", flush=True)
-with torch.inference_mode():
+# no_grad (not inference_mode): run_window_dynamics uses nested enable_grad +
+# autograd.grad inside the energy step (same as model.generate).
+with torch.no_grad():
     S_out, dyn_logs, _ = model.run_window_dynamics(
         S0, collect_metrics=True, record_tension_log=True
     )

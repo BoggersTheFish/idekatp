@@ -4,6 +4,8 @@ Phase 0 locks a **reproducible reference** for **BoggersTheLanguageModel** (`san
 
 For runs on a **public or large text corpus** (Hugging Face TinyStories / FineWeb-Edu or your own files), follow README → [First real training run](https://github.com/BoggersTheFish/BoggersTheLLM#first-real-training-run-public-corpus--checkpoint--eval-json). Use **`--eval-results-json`** with `sandbox.py` to write val CE / val PPL and the checkpoint path alongside training.
 
+**Verified CPU reference (Apr 2026):** TinyStories with **`--hf-max-chars 1500000`**, `state_dim=128`, 10 epochs — end **`train_CE` ~3.9**, **`val_CE` ~4.8**. Details: **[TRAINING_RUN_LOG.md](TRAINING_RUN_LOG.md)**.
+
 **Phase 0.5 / 1 / 2:** If you enable **`--phase05-batch-metrics-csv`**, each batch row includes extra diagnostics (window tension traces, breaks, Phase 1 interaction RMS / head tension / diversity loss, Phase 2 break direction norm, α, ΔT, Δalignment, head-weight entropy, interaction reg). Additional columns include **attractor step count**, **final window tension**, **break count**, **convergence triggered**, **`energy_per_wave_means`** (semicolon-separated), and when anchor freeze is on **`frozen_fraction_mean` / `frozen_fraction_std`** (see **`PHASE05_BATCH_CSV_HEADER`** in **`sandbox.py`**). When **`--phase05-log-metrics`** is off, heavy tracing is skipped. Re-baseline after changing **`--num-waves`**, **`--readout-fusion`**, **`--phase05-enable-anchor-freeze`**, **`--phase2-*`**, **`--phase1-*`**, **`--dynamics`**, **`--convergence-epsilon`**, or **`--num-dynamics-steps`** / **`--max-window-steps`**.
 
 ## How to record a baseline run

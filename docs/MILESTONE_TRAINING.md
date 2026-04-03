@@ -6,7 +6,7 @@ Goal: coherent multi-token generation from attractor dynamics. Use trajectory lo
 
 | Setting | Value |
 |--------|--------|
-| Dataset | `--dataset-source tinystories` (full slice: raise `--hf-max-rows` as needed) |
+| Dataset | `--dataset-source tinystories`; use **`--hf-max-chars`** (e.g. `1500000`) for CPU-sized slices (see **`docs/TRAINING_RUN_LOG.md`**) |
 | Window | `--window-size 8` |
 | State dim | `--state-dim 128` |
 | Heads | `--vectorized-num-heads 4` (requires `state_dim % 4 == 0`) |
@@ -17,7 +17,35 @@ Goal: coherent multi-token generation from attractor dynamics. Use trajectory lo
 | Stronger linear contraction | `--vectorized-strong-diffusion` |
 | Aux signal | `--token-aux-ce 0.2` and/or `--readout-aux-alpha 0.15` |
 
-## Example command
+## Example command — CPU-friendly slice (verified Apr 2026)
+
+~22 min/epoch on CPU at batch 64; ~3.9 h for 10 epochs. See **`docs/TRAINING_RUN_LOG.md`** for metrics.
+
+```bash
+python3 sandbox.py \
+  --dataset-source tinystories \
+  --hf-max-rows 50000 \
+  --hf-max-chars 1500000 \
+  --tokenizer tiktoken \
+  --vocab-cap 8192 \
+  --val-fraction 0.1 \
+  --window-size 8 \
+  --state-dim 128 \
+  --num-waves 4 \
+  --vectorized-num-heads 4 \
+  --batch-size 64 \
+  --max-epochs 10 \
+  --lr 0.001 \
+  --grad-clip 1.0 \
+  --lr-decay-every 5 \
+  --lr-gamma 0.8 \
+  --epoch-metrics-csv metrics_meaningful.csv \
+  --eval-results-json eval_meaningful.json \
+  --checkpoint-dir checkpoints/meaningful_run \
+  --save-every 500
+```
+
+## Example command — larger corpus (GPU / long run)
 
 Materialize TinyStories (adjust `--hf-max-rows` for “full” corpus), train several epochs, save checkpoints and metrics:
 

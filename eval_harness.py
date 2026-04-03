@@ -54,7 +54,9 @@ def compute_perplexity(
     model.eval()
     total_ce = 0.0
     n = 0
-    with torch.inference_mode():
+    # no_grad (not inference_mode): forward_training_window → run_window_dynamics
+    # uses nested enable_grad + autograd.grad in the energy step.
+    with torch.no_grad():
         for context, target_id in dataset:
             logits = model.forward_training_window(context)
             log_probs = F.log_softmax(logits, dim=-1)
@@ -77,7 +79,7 @@ def compute_mean_tension(
         return float("nan")
     tensions: list[float] = []
     model.eval()
-    with torch.inference_mode():
+    with torch.no_grad():
         for i in range(0, len(dataset), batch_size):
             chunk = dataset[i : i + batch_size]
             contexts = [c for c, _ in chunk]
@@ -120,7 +122,7 @@ def compute_traj_contrast(
     total = 0.0
     n = 0
     model.eval()
-    with torch.inference_mode():
+    with torch.no_grad():
         for i in range(0, len(dataset), batch_size):
             chunk = dataset[i : i + batch_size]
             if len(chunk) < 2:
@@ -158,7 +160,7 @@ def run_wave_cycle(
     # Feed language batches to the substrate (updates TSCore activations)
     model.eval()
     lang_tensions: list[float] = []
-    with torch.inference_mode():
+    with torch.no_grad():
         for i in range(0, min(len(dataset), batch_size * 8), batch_size):
             chunk = dataset[i : i + batch_size]
             if len(chunk) < 2:

@@ -209,7 +209,8 @@ def generate_with_cache(
     was_training = model.training
     model.eval()
 
-    with torch.inference_mode():
+    # no_grad (not inference_mode): cache.step → run_window_dynamics needs nested enable_grad.
+    with torch.no_grad():
         cache.warmup(prompt_ids)
 
         generated_ids = list(prompt_ids)

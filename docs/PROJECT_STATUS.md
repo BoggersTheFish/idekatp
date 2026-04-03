@@ -48,7 +48,7 @@ A **continuous attractor language model** without transformer attention: window 
 ### Near term (engineering)
 
 1. **Profile one training step on target GPU** — confirm bottleneck is window loop vs embedding vs readout.
-2. **Single “golden” config** — document one TinyStories command line with `num_waves`, `vectorized` heads dividing `wave_dim`, and checkpoint that loads cleanly.
+2. **Single “golden” config** — **CPU:** README Option **A1** + **`docs/TRAINING_RUN_LOG.md`** (TinyStories + `hf-max-chars`, `state_dim=128`, `num_waves=4`). **GPU:** scale up rows/chars and batch size; same vectorized head divisibility rule (`wave_dim % vectorized_num_heads == 0`).
 3. **Plot script** — extend `plot_phase05_metrics.py` for `frozen_fraction_*` and `energy_per_wave_means` if you rely on them.
 
 ### Near term (science / product)

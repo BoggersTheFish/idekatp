@@ -10,5 +10,6 @@ Start with the [README](../README.md) in the repo root for install, training, an
 | [BASELINE.md](BASELINE.md) | How to record Phase 0 baselines and which metrics to watch |
 | [FAILURE_ANALYSIS.md](FAILURE_ANALYSIS.md) | Symptoms and checks when training looks flat or wrong |
 | [MILESTONE_TRAINING.md](MILESTONE_TRAINING.md) | Milestone-oriented training notes |
+| [TRAINING_RUN_LOG.md](TRAINING_RUN_LOG.md) | Log of verified multi-epoch runs (metrics, corpus caps, wall time) |
 
 Submodule docs live under `vendor/*` (GOAT-TS, TS-Core, ts-llm) and are not duplicated here.
